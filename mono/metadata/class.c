@@ -1721,8 +1721,8 @@ mono_class_layout_fields (MonoClass *class)
 					field->offset += align - 1;
 					field->offset &= ~(align - 1);
 				}
-				/*TypeBuilders produce all sort of weird things*/
-				g_assert (class->image->dynamic || field->offset > 0);
+				/*can't have this assert on 2.6 since its SRE has much more trouble handling inflated types in SRE context.*/
+				/*g_assert (class->image->dynamic || field->offset > 0);*/
 				real_size = field->offset + size;
 			}
 
@@ -4528,6 +4528,9 @@ mono_class_init (MonoClass *class)
 		if (MONO_CLASS_IS_INTERFACE (class))
 			setup_interface_offsets (class, 0);
 	}
+
+	if (class->generic_class && !mono_verifier_class_is_valid_generic_instantiation (class))
+		mono_class_set_failure (class, MONO_EXCEPTION_TYPE_LOAD, g_strdup ("Invalid generic instantiation"));
 
 	goto leave;
 

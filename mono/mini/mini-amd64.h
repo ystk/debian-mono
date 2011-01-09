@@ -282,7 +282,7 @@ typedef struct {
 
 #define MONO_ARCH_NOMAP32BIT
 
-#elif defined (__FreeBSD__)
+#elif defined (__FreeBSD__) || defined(__FreeBSD_kernel__)
 
 #define REG_RAX 7
 #define REG_RCX 4
@@ -376,6 +376,7 @@ typedef struct {
 #define MONO_ARCH_DYN_CALL_PARAM_AREA 0
 
 #define MONO_ARCH_HAVE_LLVM_IMT_TRAMPOLINE 1
+#define MONO_ARCH_HAVE_SETUP_RESUME_FROM_SIGNAL_HANDLER_CTX 1
 
 #define MONO_ARCH_USE_OP_TAIL_CALL(caller_sig, callee_sig) mono_metadata_signature_equal ((caller_sig), (callee_sig))
 
