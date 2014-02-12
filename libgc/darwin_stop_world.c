@@ -89,6 +89,9 @@ void GC_push_all_stacks() {
 #elif defined(ARM)
   arm_thread_state_t state;
   mach_msg_type_number_t thread_state_count = ARM_THREAD_STATE_COUNT;
+#elif defined(X86_64)
+  x86_thread_state64_t state;
+  mach_msg_type_number_t thread_state_count = x86_THREAD_STATE64_COUNT;
 #else
 # error FIXME for non-x86 || ppc architectures
   mach_msg_type_number_t thread_state_count = MACHINE_THREAD_STATE_COUNT;
@@ -109,7 +112,7 @@ void GC_push_all_stacks() {
 			     GC_MACH_THREAD_STATE_FLAVOR,
 			     (natural_t*)&state,
 			     &thread_state_count);
-	if(r != KERN_SUCCESS) ABORT("thread_get_state failed");
+	if(r != KERN_SUCCESS) continue;
 	
 #if defined(I386)
 #if MAC_OS_X_VERSION_MIN_REQUIRED >= MAC_OS_X_VERSION_10_5
@@ -134,8 +137,25 @@ void GC_push_all_stacks() {
 	GC_push_one(state.esi); 
 	GC_push_one(state.ebp); 
 #endif
+#elif defined(X86_64)
+          lo = state.__rsp;
+          GC_push_one(state.__rax);
+          GC_push_one(state.__rbx);
+          GC_push_one(state.__rcx);
+          GC_push_one(state.__rdx);
+          GC_push_one(state.__rdi);
+          GC_push_one(state.__rsi);
+          GC_push_one(state.__rbp);
+          GC_push_one(state.__r8);
+          GC_push_one(state.__r9);
+          GC_push_one(state.__r10);
+          GC_push_one(state.__r11);
+          GC_push_one(state.__r12);
+          GC_push_one(state.__r13);
+          GC_push_one(state.__r14);
+          GC_push_one(state.__r15);
 #elif defined(POWERPC)
-#if defined(_STRUCT_PPC_EXCEPTION_STATE)
+#if defined(_STRUCT_PPC_EXCEPTION_STATE) && defined(__DARWIN_UNIX03)
 	lo = (void*)(state.__r1 - PPC_RED_ZONE_SIZE);
         
 	GC_push_one(state.__r0); 
@@ -549,6 +569,9 @@ void GC_stop_world()
     thread_act_array_t act_list, prev_list;
     mach_msg_type_number_t listcount, prevcount;
     
+    if (GC_notify_event)
+        GC_notify_event (GC_EVENT_PRE_STOP_WORLD);
+
 #   if DEBUG_THREADS
       GC_printf1("Stopping the world from 0x%lx\n", mach_thread_self());
 #   endif
@@ -619,6 +642,9 @@ void GC_stop_world()
     #endif
 	  
 	  mach_port_deallocate(my_task, my_thread);
+
+    if (GC_notify_event)
+        GC_notify_event (GC_EVENT_POST_STOP_WORLD);
 }
 
 /* Caller holds allocation lock, and has held it continuously since	*/
@@ -634,6 +660,9 @@ void GC_start_world()
   mach_msg_type_number_t listcount;
   struct thread_basic_info info;
   mach_msg_type_number_t outCount = THREAD_INFO_MAX;
+
+  if (GC_notify_event)
+      GC_notify_event (GC_EVENT_PRE_START_WORLD);
   
 #   if DEBUG_THREADS
       GC_printf0("World starting\n");
@@ -680,6 +709,10 @@ void GC_start_world()
     vm_deallocate(my_task, (vm_address_t)act_list, sizeof(thread_t) * listcount);
 	
 	mach_port_deallocate(my_task, my_thread);
+
+    if (GC_notify_event)
+        GC_notify_event (GC_EVENT_POST_START_WORLD);
+
 #   if DEBUG_THREADS
      GC_printf0("World started\n");
 #   endif

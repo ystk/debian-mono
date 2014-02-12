@@ -76,6 +76,12 @@
 #    define LOCK() RT0u__inCritical++
 #    define UNLOCK() RT0u__inCritical--
 #  endif
+#  ifdef SN_TARGET_PS3
+#    include <pthread.h>
+     extern pthread_mutex_t GC_allocate_ml;
+#      define LOCK()   pthread_mutex_lock(&GC_allocate_ml)
+#      define UNLOCK() pthread_mutex_unlock(&GC_allocate_ml)
+#  endif
 #  ifdef GC_SOLARIS_THREADS
 #    include <thread.h>
 #    include <signal.h>
@@ -218,22 +224,40 @@
 #    endif /* ALPHA */
 #    ifdef ARM32
         inline static int GC_test_and_set(volatile unsigned int *addr) {
-#         ifdef __thumb__
-               return __sync_lock_test_and_set (addr, 1);
-#         else
-               int oldval;
-               /* SWP on ARM is very similar to XCHG on x86.  Doesn't lock the
-                * bus because there are no SMP ARM machines.  If/when there are,
-                * this code will likely need to be updated. */
-               /* See linuxthreads/sysdeps/arm/pt-machine.h in glibc-2.1 */
-               __asm__ __volatile__("swp %0, %1, [%2]"
-           		  	     : "=&r"(oldval)
-           			     : "r"(1), "r"(addr)
-     			     : "memory");
-               return oldval;
-#         endif
+#if defined(__ARM_ARCH_6__) || defined(__ARM_ARCH_7A__) || defined(__ARM_ARCH_7__)
+          int ret, tmp;
+          __asm__ __volatile__ (
+                                 "1:\n"
+                                 "ldrex %0, [%3]\n"
+                                 "strex %1, %2, [%3]\n" 
+                                 "teq %1, #0\n"
+                                 "bne 1b\n"
+                                 : "=&r" (ret), "=&r" (tmp)
+                                 : "r" (1), "r" (addr)
+                                 : "memory", "cc");
+          return ret;
+#else
+          int oldval;
+          /* SWP on ARM is very similar to XCHG on x86.  Doesn't lock the
+           * bus because there are no SMP ARM machines.  If/when there are,
+           * this code will likely need to be updated. */
+          /* See linuxthreads/sysdeps/arm/pt-machine.h in glibc-2.1 */
+          __asm__ __volatile__("swp %0, %1, [%2]"
+      		  	     : "=&r"(oldval)
+      			     : "r"(1), "r"(addr)
+			     : "memory");
+          return oldval;
+#endif
         }
 #       define GC_TEST_AND_SET_DEFINED
+      inline static void GC_clear(volatile unsigned int *addr) {
+#ifdef HAVE_ARMV6
+		  /* Memory barrier */
+		  __asm__ __volatile__ ("mcr p15, 0, %0, c7, c10, 5" : : "r" (0) : "memory");
+#endif
+		  *(addr) = 0;
+      }
+#     define GC_CLEAR_DEFINED
 #    endif /* ARM32 */
 #    ifdef CRIS
         inline static int GC_test_and_set(volatile unsigned int *addr) {

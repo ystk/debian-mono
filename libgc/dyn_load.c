@@ -26,7 +26,7 @@
  * None of this is safe with dlclose and incremental collection.
  * But then not much of anything is safe in the presence of dlclose.
  */
-#if (defined(__linux__) || defined(__GLIBC__)) && !defined(_GNU_SOURCE)
+#if defined(__linux__) && !defined(_GNU_SOURCE)
     /* Can't test LINUX, since this must be define before other includes */
 #   define _GNU_SOURCE
 #endif
@@ -57,6 +57,7 @@
     !defined(HPUX) && !(defined(LINUX) && defined(__ELF__)) && \
     !defined(RS6000) && !defined(SCO_ELF) && !defined(DGUX) && \
     !(defined(FREEBSD) && defined(__ELF__)) && \
+    !(defined(OPENBSD) && (defined(__ELF__) || defined(M68K))) && \
     !(defined(NETBSD) && defined(__ELF__)) && !defined(HURD) && \
     !defined(DARWIN)
  --> We only know how to find data segments of dynamic libraries for the
@@ -92,9 +93,12 @@
 
 #if defined(LINUX) && defined(__ELF__) || defined(SCO_ELF) || \
     (defined(FREEBSD) && defined(__ELF__)) || defined(DGUX) || \
+    (defined(OPENBSD) && defined(__ELF__)) || \
     (defined(NETBSD) && defined(__ELF__)) || defined(HURD)
 #   include <stddef.h>
+# if !defined(OPENBSD)
 #   include <elf.h>
+# endif
 #   include <link.h>
 #endif
 
@@ -295,6 +299,7 @@ void GC_register_dynamic_libraries()
 
 #if defined(LINUX) && defined(__ELF__) || defined(SCO_ELF) || \
     (defined(FREEBSD) && defined(__ELF__)) || defined(DGUX) || \
+    (defined(OPENBSD) && defined(__ELF__)) || \
     (defined(NETBSD) && defined(__ELF__)) || defined(HURD)
 
 
@@ -389,7 +394,7 @@ GC_bool GC_register_main_static_data()
 /* For glibc 2.2.4+.  Unfortunately, it doesn't work for older	*/
 /* versions.  Thanks to Jakub Jelinek for most of the code.	*/
 
-# if (defined(LINUX) || defined (__GLIBC__)) /* Are others OK here, too? */ \
+# if defined(LINUX) /* Are others OK here, too? */ \
      && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ > 2) \
          || (__GLIBC__ == 2 && __GLIBC_MINOR__ == 2 && defined(DT_CONFIG))) 
 
@@ -473,8 +478,10 @@ GC_bool GC_register_main_static_data()
 /* This doesn't necessarily work in all cases, e.g. with preloaded
  * dynamic libraries.						*/
 
-#if defined(NETBSD)
+#if defined(NETBSD) || defined(OPENBSD)
+# if !defined(OPENBSD)
 #  include <sys/exec_elf.h>
+# endif
 /* for compatibility with 1.4.x */
 #  ifndef DT_DEBUG
 #  define DT_DEBUG     21

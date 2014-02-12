@@ -10,9 +10,10 @@
 // (C) Copyright 2002 Rodrigo Moya
 // (C) Copyright 2003 Daniel Morgan
 // (C) Copyright 2003 Martin Willemoes Hansen
-//
+// (C) Copyright 2011 Xamarin Inc
 
 //
+// Copyright 2011 Xamarin Inc (http://www.xamarin.com)
 // Copyright (C) 2004 Novell, Inc (http://www.novell.com)
 //
 // Permission is hereby granted, free of charge, to any person obtaining
@@ -872,5 +873,87 @@ namespace MonoTests.System.Data
 			Assert.AreEqual (-1, col2.Ordinal, "#D1");
 			Assert.IsNull (col2.Table, "#D2");
 		}
+		
+		[Test]
+		public void B565616_NonIConvertibleTypeTest ()
+		{
+			try {
+				DataTable dt = new DataTable ();
+				Guid id = Guid.NewGuid();
+				dt.Columns.Add ("ID", typeof(string));
+				DataRow row = dt.NewRow ();
+				row["ID"]= id;
+				Assert.AreEqual (id.ToString(), row["ID"], "#N1");
+			} catch (InvalidCastException ex) {
+				Assert.Fail ("#NonIConvertibleType Test");
+			}
+		}
+		
+		[Test]
+		public void B623451_SetOrdinalTest ()
+		{
+			try {
+				DataTable t = new DataTable();
+				t.Columns.Add("one");
+				t.Columns.Add("two");
+				t.Columns.Add("three");
+				Assert.AreEqual ("one", t.Columns[0].ColumnName, "#SO1-1");
+				Assert.AreEqual ("two", t.Columns[1].ColumnName, "#SO1-2");
+				Assert.AreEqual ("three", t.Columns[2].ColumnName, "#SO1-3");
+
+				t.Columns["three"].SetOrdinal(0);
+				Assert.AreEqual ("three", t.Columns[0].ColumnName, "S02-1");
+				Assert.AreEqual ("one", t.Columns[1].ColumnName, "S02-2");
+				Assert.AreEqual ("two", t.Columns[2].ColumnName, "S02-3");
+
+				t.Columns["three"].SetOrdinal(1);
+				Assert.AreEqual ("one", t.Columns[0].ColumnName, "S03-1");
+				Assert.AreEqual ("three", t.Columns[1].ColumnName, "S03-2");
+				Assert.AreEqual ("two", t.Columns[2].ColumnName, "S03-3");
+			} catch (ArgumentOutOfRangeException ex) {
+				Assert.Fail ("SetOrdinalTest failed");
+			}
+		}
+
+		[Test]
+		public void Xamarin665 ()
+		{
+			var t = new DataTable() ;
+			var c1 = t.Columns.Add ("c1");
+			var c2 = t.Columns.Add ("c2");
+			c2.Expression = "TRIM(ISNULL(c1,' '))";
+			c2.Expression = "SUBSTRING(ISNULL(c1,' '), 1, 10)";
+		}
+
+		DataColumn MakeColumn (string col, string test)
+		{
+			return new DataColumn () {
+				ColumnName = col,
+				Expression = test
+			};
+		}
+
+#if false
+// Check Windows output for the row [0] value
+		[Test]
+		public void NullStrings ()
+		{
+			var a = MakeColumn ("nullbar", "null+'bar'");
+			var b = MakeColumn ("barnull", "'bar'+null");
+			var c = MakeColumn ("foobar", "'foo'+'bar'");
+
+		        var table = new DataTable();
+		        
+		        table.Columns.Add(a);
+		        table.Columns.Add(b);
+		        table.Columns.Add(c);
+		
+		        var row = table.NewRow();
+		        table.Rows.Add(row);
+			Assert.AreEqual (row [0], DBNull.Value, "#1");
+			Assert.AreEqual (row [1], DBNull.Value, "#2");
+			Assert.AreEqual (row [2], "foobar", "#3");
+		}
+#endif
 	}
 }

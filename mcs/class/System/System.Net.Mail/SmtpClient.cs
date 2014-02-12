@@ -57,6 +57,9 @@ using X509CertificateCollection = PrebuiltSystem::System.Security.Cryptography.X
 
 namespace System.Net.Mail {
 	public class SmtpClient
+#if NET_4_0
+	: IDisposable
+#endif
 	{
 		#region Fields
 
@@ -118,11 +121,13 @@ namespace System.Net.Mail {
 			if (cfg != null) {
 				this.host = cfg.Network.Host;
 				this.port = cfg.Network.Port;
-#if false
+#if NET_4_0
+				this.enableSsl = cfg.Network.EnableSsl;
+#endif
 				TargetName = cfg.Network.TargetName;
 				if (this.TargetName == null)
 					TargetName = "SMTPSVC/" + (host != null ? host : "");
-#endif
+
 				
 				if (cfg.Network.UserName != null) {
 					string password = String.Empty;
@@ -133,9 +138,12 @@ namespace System.Net.Mail {
 					Credentials = new CCredentialsByHost (cfg.Network.UserName, password);
 				}
 
-				if (cfg.From != null)
+				if (!String.IsNullOrEmpty (cfg.From))
 					defaultFrom = new MailAddress (cfg.From);
 			}
+#else
+			// Just to eliminate the warning, this codepath does not end up in production.
+			defaultFrom = null;
 #endif
 
 			if (!String.IsNullOrEmpty (host))
@@ -250,7 +258,18 @@ namespace System.Net.Mail {
 		#endregion // Events 
 
 		#region Methods
+#if NET_4_0
+		public void Dispose ()
+		{
+			Dispose (true);
+		}
 
+		[MonoTODO ("Does nothing at the moment.")]
+		protected virtual void Dispose (bool disposing)
+		{
+			// TODO: We should close all the connections and abort any async operations here
+		}
+#endif
 		private void CheckState ()
 		{
 			if (messageInProcess != null)
@@ -259,8 +278,11 @@ namespace System.Net.Mail {
 		
 		private static string EncodeAddress(MailAddress address)
 		{
-			string encodedDisplayName = ContentType.EncodeSubjectRFC2047 (address.DisplayName, Encoding.UTF8);
-			return "\"" + encodedDisplayName + "\" <" + address.Address + ">";
+			if (!String.IsNullOrEmpty (address.DisplayName)) {
+				string encodedDisplayName = ContentType.EncodeSubjectRFC2047 (address.DisplayName, Encoding.UTF8);
+				return "\"" + encodedDisplayName + "\" <" + address.Address + ">";
+			}
+			return address.ToString ();
 		}
 
 		private static string EncodeAddresses(MailAddressCollection addresses)
@@ -516,16 +538,18 @@ namespace System.Net.Mail {
 			try {
 				writer = new StreamWriter(filename);
 
+				// FIXME: See how Microsoft fixed the bug about envelope senders, and how it actually represents the info in .eml file headers
+				// 	  For all we know, defaultFrom may be the envelope sender
+				// For now, we are no worse than some versions of .NET
 				MailAddress from = message.From;
-
 				if (from == null)
 					from = defaultFrom;
 				
 				SendHeader (HeaderName.Date, DateTime.Now.ToString ("ddd, dd MMM yyyy HH':'mm':'ss zzz", DateTimeFormatInfo.InvariantInfo));
-				SendHeader (HeaderName.From, from.ToString ());
-				SendHeader (HeaderName.To, message.To.ToString ());
+				SendHeader (HeaderName.From, EncodeAddress(from));
+				SendHeader (HeaderName.To, EncodeAddresses(message.To));
 				if (message.CC.Count > 0)
-					SendHeader (HeaderName.Cc, message.CC.ToString ());
+					SendHeader (HeaderName.Cc, EncodeAddresses(message.CC));
 				SendHeader (HeaderName.Subject, EncodeSubjectRFC2047 (message));
 
 				foreach (string s in message.Headers.AllKeys)
@@ -594,14 +618,16 @@ namespace System.Net.Mail {
 			
 			if (authMechs != AuthMechs.None)
 				Authenticate ();
-			
-			MailAddress from = message.From;
 
-			if (from == null)
-				from = defaultFrom;
+			// The envelope sender: use 'Sender:' in preference of 'From:'
+			MailAddress sender = message.Sender;
+			if (sender == null)
+				sender = message.From;
+			if (sender == null)
+				sender = defaultFrom;
 			
 			// MAIL FROM:
-			status = SendCommand ("MAIL FROM:<" + from.Address + '>');
+			status = SendCommand ("MAIL FROM:<" + sender.Address + '>');
 			if (IsError (status)) {
 				throw new SmtpException (status.StatusCode, status.Description);
 			}
@@ -647,6 +673,10 @@ namespace System.Net.Mail {
 			dt = dt.Remove (dt.Length - 3, 1);
 			SendHeader (HeaderName.Date, dt);
 
+			MailAddress from = message.From;
+			if (from == null)
+				from = defaultFrom;
+
 			SendHeader (HeaderName.From, EncodeAddress (from));
 			SendHeader (HeaderName.To, EncodeAddresses (message.To));
 			if (message.CC.Count > 0)
@@ -673,6 +703,7 @@ namespace System.Net.Mail {
 				SendHeader ("Sender", EncodeAddress (message.Sender));
 			if (message.ReplyToList.Count > 0)
 				SendHeader ("Reply-To", EncodeAddresses (message.ReplyToList));
+
 #if NET_4_0
 			foreach (string s in message.Headers.AllKeys)
 				SendHeader (s, ContentType.EncodeSubjectRFC2047 (message.Headers [s], message.HeadersEncoding));

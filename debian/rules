@@ -1,7 +1,7 @@
 #!/usr/bin/make -f
-
 #export DH_VERBOSE=1
-export MONO_SHARED_DIR=$(CURDIR)
+
+include debian/mono-archs.make
 
 # Assume Debian behaviour by default.
 DISTRO = $(shell lsb_release -si)
@@ -15,7 +15,7 @@ UPVERSION = $(shell echo $(VERSION) | sed 's,-.*,,' | sed 's,+dfsg.*,,')
 NEXT_UPVERSION = $(shell perl -e '$$_=pop; s/(\d+)$$/$$1+1/e; print' $(UPVERSION))
 DEB_SOURCE_NAME = $(shell dpkg-parsechangelog -l$(DEBIAN_DIR)/changelog | grep ^Source | cut -d" " -f2)
 
-RUN_MONO = LD_LIBRARY_PATH=debian/tmp/usr/lib MONO_PATH=debian/tmp/usr/lib/mono/2.0 debian/tmp/usr/bin/mono
+RUN_MONO = LD_LIBRARY_PATH=debian/tmp/usr/lib MONO_PATH=debian/tmp/usr/lib/mono/4.0 debian/tmp/usr/bin/mono
 DH_INTERNAL_MONO_PARAM = --internal-mono
 ifeq ($(shell dpkg --compare-versions $$(dpkg-query -f '$${Version}' -W debhelper) lt 7.1; echo $$?), 0)
 	DH_INTERNAL_MONO_PARAM = internal-mono
@@ -38,32 +38,29 @@ endif
 
 ifeq ($(DEB_BUILD_ARCH), armel)
 	CONF_FLAGS += --with-fpu=NONE
-	# the build-system picks __thread for armel which is not working,
-	# thus we have to explicitly pick pthread
-	CONF_FLAGS += --with-tls=pthread
+endif
+ifeq ($(DEB_BUILD_ARCH), powerpc)
+	# libgc with parallel mark FTBFS on ppc
+	CONF_FLAGS += --disable-parallel-mark
 endif
 
-ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
-	CFLAGS += -O0 -g
+ifneq (,$(findstring $(DEB_BUILD_ARCH),$(DEB_MONO_SGEN_ARCHS)))
+	CONF_FLAGS += --with-sgen=yes
 else
-	CFLAGS += -O2 -g
+	CONF_FLAGS += --with-sgen=no
 endif
 
 ifneq (,$(findstring nocheck,$(DEB_BUILD_OPTIONS)))
 	MINI_TEST = true
-	MONO_TEST = true
+	MONO_BOEHM_TEST = true
+	MONO_SGEN_TEST = true
 else
 	MINI_TEST = cd mono/mini && make check
-	MONO_TEST = cd mono/tests && make test
+	MONO_BOEHM_TEST = cd mono/tests && MONO_ENV_OPTIONS=--gc=boehm make test
+	MONO_SGEN_TEST = cd mono/tests && MONO_ENV_OPTIONS=--gc=sgen make test
 endif
-
-FIREBIRDSQL_REL = "libmono-firebirdsql1.7-cil (= $(VERSION))"
-ifeq ($(DISTRO), Ubuntu)
-	FIREBIRDSQL_VARS =  -Vfirebirdsql:Suggests=$(FIREBIRDSQL_REL)
-	FIREBIRDSQL_VARS += -Vfirebirdsql:Recommends=
-else
-	FIREBIRDSQL_VARS =  -Vfirebirdsql:Suggests=
-	FIREBIRDSQL_VARS += -Vfirebirdsql:Recommends=$(FIREBIRDSQL_REL)
+ifeq ($(DEB_BUILD_ARCH), powerpc)
+	MONO_SGEN_TEST = true
 endif
 
 MDB_REL = mono-debugger
@@ -75,24 +72,27 @@ else
 	MDB_VARS += -Vmdb:Recommends=$(MDB_REL)
 endif
 
-CONFIGURE =	CFLAGS="$(CFLAGS)" \
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/buildflags.mk
+
+CONFIGURE =	CFLAGS="$(CFLAGS)" CPPFLAGS="$(CPPFLAGS)" LDFLAGS="$(LDFLAGS)"   \
 		./configure $(CONF_FLAGS) --prefix=/usr \
 		  --mandir=\$${prefix}/share/man \
 		  --infodir=\$${prefix}/share/info --sysconfdir=/etc \
-		  --with-jit=yes --with-ikvm-native=no --with-preview=yes \
-		  --with-libgdiplus=installed --with-x=yes \
-		  --with-profile4=no \
-		  --with-moonlight=no \
-		  --enable-quiet-build=no \
-		  --disable-shared-handles
+		  --with-ikvm-native=no \
+		  --disable-quiet-build \
+		  --disable-system-aot
 
 # Mono's build system doesn't like -j > 1
 MAKE_FLAGS += -j1
 export MAKEFLAGS=$(MAKE_FLAGS)
 
-#ifeq ($(DEB_BUILD_ARCH), i386)
-#	MAKE_FLAGS += RUNTIME=$(CURDIR)/debian/mono-aot-wrapper
-#endif
+ifneq (,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+	NUMJOBS = $(patsubst parallel=%,%,$(filter parallel=%,$(DEB_BUILD_OPTIONS)))
+	EGLIB_MAKE_FLAGS += -j$(NUMJOBS)
+	LIBGC_MAKE_FLAGS += -j$(NUMJOBS)
+	MONO_MAKE_FLAGS += -j$(NUMJOBS)
+endif
 
 autoreconf: autoreconf-stamp
 autoreconf-stamp:
@@ -108,6 +108,9 @@ configure-stamp: autoreconf-stamp
 build: build-stamp
 build-stamp: configure-stamp
 	dh_testdir
+	cd eglib && $(MAKE) $(EGLIB_MAKE_FLAGS)
+	cd libgc && $(MAKE) $(LIBGC_MAKE_FLAGS)
+	cd mono && $(MAKE) $(MONO_MAKE_FLAGS)
 	LC_ALL=C $(MAKE) $(MAKE_FLAGS) EXTERNAL_MCS=false EXTERNAL_MONO=false
 
 	cd debian/detector && \
@@ -123,7 +126,8 @@ build-stamp: configure-stamp
 test: test-stamp
 test-stamp: build-stamp
 	-$(MINI_TEST)
-	-$(MONO_TEST)
+	-$(MONO_BOEHM_TEST)
+	-$(MONO_SGEN_TEST)
 	# funny bug-459094.cs creates too long directory names which
 	# pbuilder is unable to remove, eh
 	rm -rf mono/tests/abcde12345abcde12345abcde12345abcde12345/
@@ -136,22 +140,17 @@ clean:
 	[ ! -f Makefile ] || $(MAKE) distclean
 	# distclean misses stuff
 	find -name "*.mdb" -delete
-	# AOT stuff we created using mono-aot-wrapper/mono-aot-bootstrap
-	find mcs/class/lib -name "*.so" -delete
+	rm -rf mcs/class/lib/basic/ \
+	       mcs/class/lib/net_2_0/ \
+	       mcs/class/lib/net_3_5/ \
+	       mcs/class/lib/net_4_0/
+
 	-cd debian/detector && $(MAKE) clean
 	rm -f debian/MonoGetAssemblyName.exe \
 	      debian/mono-api-diff.exe
-	rm -rf $(MONO_SHARED_DIR)/.wapi
-
-	rm -f mcs/class/lib/default/mono-api-info.exe               \
-	      mcs/class/lib/net_2_0/mono-api-info.exe               \
-	      mcs/class/Managed.Windows.Forms/resources/*.resources \
-	      mcs/class/Mono.Data.Sqlite/resources/SR.resources     \
-	      mcs/class/Novell.Directory.Ldap/Novell.Directory.Ldap.Utilclass/ResultCodeMessages.resources \
-	      mcs/class/System.Web/resources/TranslationResources.resources
 
 	# clean stuff handled by autoreconf
-	rm -rf configure config.sub config.guess ltmain.sh aclocal.m4 autom4te.cache/
+	rm -rf configure config.sub config.guess aclocal.m4 autom4te.cache/
 	find . -name "Makefile.in" -delete
 
 	rm -f autoreconf-stamp
@@ -161,141 +160,99 @@ clean:
 
 	dh_clean
 
-install: install-all
-install-all: install-arch install-indep
-
-install-arch: install-arch-stamp
-install-arch-stamp:
+install: install-stamp
+install-stamp:
 	dh_testdir
 	dh_testroot
-	#dh_clean -k -s
-	dh_installdirs -s
+	dh_prep
+	dh_installdirs
+
 	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp
 	cd mcs/jay && \
-	  $(MAKE) install DESTDIR=$(CURDIR)/debian/tmp prefix=/usr INSTALL=../../install-sh
-	touch install-arch-stamp
+		$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp
 
-install-indep: install-indep-stamp
-install-indep-stamp:
-	dh_testdir
-	dh_testroot
-	#dh_clean -k -i
-	dh_installdirs -i
-	cd mcs && \
-	  $(MAKE) install NO_DIR_CHECK=1 DESTDIR=$(CURDIR)/debian/tmp PROFILE=net_1_1 && \
-	  $(MAKE) install NO_DIR_CHECK=1 DESTDIR=$(CURDIR)/debian/tmp PROFILE=net_2_0 && \
-	  $(MAKE) install NO_DIR_CHECK=1 DESTDIR=$(CURDIR)/debian/tmp PROFILE=net_3_5
-
-	# upstream forgot to remove this one
-	rm -f debian/tmp/usr/bin/mbas
 	# don't want docs of bundled libgc
 	rm -rf debian/tmp/usr/share/libgc-mono
-	# Mono.WebBrowser.dll is linked with CLI 2.0, thus the symlink in 1.0/ doesn't make sense
-	rm -f debian/tmp/usr/lib/mono/1.0/Mono.WebBrowser.dll
 	# Mono.Security.Win32.dll is only useful on windows, as it wrap the win api
-	rm -rf $(CURDIR)/debian/tmp/usr/lib/mono/gac/Mono.Security.Win32/1.0.5000.0__*/ \
-	       $(CURDIR)/debian/tmp/usr/lib/mono/gac/Mono.Security.Win32/2.0.0.0__*/
-	rm -f $(CURDIR)/debian/tmp/usr/lib/mono/1.0/Mono.Security.Win32.dll \
-	      $(CURDIR)/debian/tmp/usr/lib/mono/2.0/Mono.Security.Win32.dll
-	# bug in Mono 2.4: <kangaroo> if you meant on 2.4 that was a bug
-	rm -rf $(CURDIR)/debian/tmp/usr/lib/mono/gac/Mono.CompilerServices.SymbolWriter/2.0.5.0__*/
-	# CLI 1.0 is only kept for compat, don't ship new 1.0 libs
-	rm -rf $(CURDIR)/debian/tmp/usr/lib/mono/gac/Mono.Messaging/1.0.5000.0__*/
+	rm -rf $(CURDIR)/debian/tmp/usr/lib/mono/gac/Mono.Security.Win32/
+	rm -f  $(CURDIR)/debian/tmp/usr/lib/mono/2.0/Mono.Security.Win32.dll*
+	rm -f  $(CURDIR)/debian/tmp/usr/lib/mono/4.0/Mono.Security.Win32.dll*
+	# we don't ship bundled nunit of mono
+	rm -f  $(CURDIR)/debian/tmp/usr/lib/mono/2.0/nunit*
+	rm -f  $(CURDIR)/debian/tmp/usr/lib/mono/4.0/nunit*
+	rm -f  $(CURDIR)/debian/tmp/usr/lib/pkgconfig/mono-nunit.pc
+	rm -rf $(CURDIR)/debian/tmp/usr/lib/mono/gac/nunit*/
+	rm -f  $(CURDIR)/debian/tmp/usr/bin/nunit*
+	# csharp 2.0 is unneeded as we ship 4.0 already
+	rm -rf $(CURDIR)/debian/tmp/usr/lib/mono/gac/Mono.CSharp/2.0.0.0__*/
+	rm -f  $(CURDIR)/debian/tmp/usr/lib/mono/2.0/Mono.CSharp.dll*
+	rm -f  $(CURDIR)/debian/tmp/usr/lib/mono/2.0/csharp.exe*
+	rm -f  $(CURDIR)/debian/tmp/usr/bin/csharp2
+
+	# mono 2.10.1 bug, this lib is really linked against corlib 4.0
+	rm -f $(CURDIR)/debian/tmp/usr/lib/mono/2.0/Mono.C5.dll
+	# mono 2.10.1 bug, prj2make was removed but the start script not
+	rm -f $(CURDIR)/debian/tmp/usr/bin/prj2make
+	# mono 2.10.1 bug, this lib doesn't exist for .NET 4.0 and also has
+	# a wrong assembly version
+	rm -rf $(CURDIR)/debian/tmp/usr/lib/mono/gac/cscompmgd/0.0.0.0__*/
+	rm -f  $(CURDIR)/debian/tmp/usr/lib/mono/4.0/cscompmgd*
 
 	# copy missing 2.0 manpages
 	cp $(CURDIR)/debian/tmp/usr/share/man/man1/al.1 \
 	   $(CURDIR)/debian/tmp/usr/share/man/man1/al2.1
-	cp $(CURDIR)/debian/tmp/usr/share/man/man1/gacutil.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/gacutil2.1
 	cp $(CURDIR)/debian/tmp/usr/share/man/man1/mcs.1 \
 	   $(CURDIR)/debian/tmp/usr/share/man/man1/gmcs.1
 	cp $(CURDIR)/debian/tmp/usr/share/man/man1/mcs.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/smcs.1
+	   $(CURDIR)/debian/tmp/usr/share/man/man1/dmcs.1
 	cp $(CURDIR)/debian/tmp/usr/share/man/man1/mono-service.1 \
 	   $(CURDIR)/debian/tmp/usr/share/man/man1/mono-service2.1
-	cp $(CURDIR)/debian/tmp/usr/share/man/man1/mkbundle.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/mkbundle2.1
 	cp $(CURDIR)/debian/tmp/usr/share/man/man1/wsdl.1 \
 	   $(CURDIR)/debian/tmp/usr/share/man/man1/wsdl2.1
+	cp $(CURDIR)/debian/tmp/usr/share/man/man1/gacutil.1 \
+	   $(CURDIR)/debian/tmp/usr/share/man/man1/gacutil2.1
 	cp $(CURDIR)/debian/tmp/usr/share/man/man1/monop.1 \
 	   $(CURDIR)/debian/tmp/usr/share/man/man1/monop2.1
-	cp $(CURDIR)/debian/tmp/usr/share/man/man1/ilasm.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/ilasm2.1
 	cp $(CURDIR)/debian/tmp/usr/share/man/man1/resgen.1 \
 	   $(CURDIR)/debian/tmp/usr/share/man/man1/resgen2.1
-	cp $(CURDIR)/debian/tmp/usr/share/man/man1/genxs.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/genxs2.1
-	cp $(CURDIR)/debian/tmp/usr/share/man/man1/xsd.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/xsd2.1
-	# copy missing 1.0 manpages
-	cp $(CURDIR)/debian/tmp/usr/share/man/man1/al.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/al1.1
-	cp $(CURDIR)/debian/tmp/usr/share/man/man1/gacutil.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/gacutil1.1
-	cp $(CURDIR)/debian/tmp/usr/share/man/man1/genxs.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/genxs1.1
-	cp $(CURDIR)/debian/tmp/usr/share/man/man1/ilasm.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/ilasm1.1
-	cp $(CURDIR)/debian/tmp/usr/share/man/man1/mkbundle.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/mkbundle1.1
-	cp $(CURDIR)/debian/tmp/usr/share/man/man1/monop.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/monop1.1
-	cp $(CURDIR)/debian/tmp/usr/share/man/man1/resgen.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/resgen1.1
-	cp $(CURDIR)/debian/tmp/usr/share/man/man1/wsdl.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/wsdl1.1
-	cp $(CURDIR)/debian/tmp/usr/share/man/man1/xsd.1 \
-	   $(CURDIR)/debian/tmp/usr/share/man/man1/xsd1.1
-	# copy missing default scripts
-	cp $(CURDIR)/debian/tmp/usr/bin/xsd \
-	   $(CURDIR)/debian/tmp/usr/bin/xsd1
-	# gacutil should be 2.0 by default (like all other development tools)
-	mv $(CURDIR)/debian/tmp/usr/bin/gacutil \
-	   $(CURDIR)/debian/tmp/usr/bin/gacutil1
-	cp $(CURDIR)/debian/tmp/usr/bin/gacutil2 \
-	   $(CURDIR)/debian/tmp/usr/bin/gacutil
-
-	touch install-indep-stamp
+	touch $@
 
 binary: binary-arch binary-indep
 
-binary-indep: build-stamp install-arch install-indep
+binary-indep: build-stamp install-stamp
 	dh_testdir
 	dh_testroot
 
 	# Build the late-GAC tool,
 	# using the built Mono runtime from debian/tmp
 	# (thus the install-arch target dependency!)
-	$(RUN_MONO) mcs/class/lib/net_2_0/gmcs.exe \
+	$(RUN_MONO) mcs/class/lib/net_4_0/dmcs.exe \
 	  -target:exe \
 	  -out:debian/MonoGetAssemblyName.exe \
 	  debian/MonoGetAssemblyName.cs
 
 	# Build mono-api-diff
-	$(RUN_MONO) mcs/class/lib/net_2_0/gmcs.exe \
+	$(RUN_MONO) mcs/class/lib/net_4_0/dmcs.exe \
 	  -target:exe \
 	  -out:debian/mono-api-diff.exe \
 	  debian/mono-api-diff.cs
 
 	# that exclude list are programs for arch-dep packages
-	dh_install -i -Xbin/monodis -Xbin/monograph -Xbin/mono-find-provides -Xbin/mono-find-requires -Xbin/pedump -Xbin/jay
+	dh_install -i --list-missing -Xusr/share/man -Xusr/share/jay -Xusr/lib/libmono -Xusr/lib/libMono -Xbin/monodis -Xbin/monograph -Xbin/mono-find-provides -Xbin/mono-find-requires -Xbin/pedump -Xbin/jay
 
 	# Late GAC
 	install -D -m 755 debian/mono.runtime-script debian/mono-gac/usr/share/cli-common/runtimes.d/mono
 
-	install -m 644 debian/System.Data.dll.config debian/libmono-system-data1.0-cil/usr/lib/mono/gac/System.Data/1.0.*/
 	install -m 644 debian/System.Data.dll.config debian/libmono-system-data2.0-cil/usr/lib/mono/gac/System.Data/2.0.*/
-	install -m 644 debian/System.Drawing.dll.config debian/libmono-system1.0-cil/usr/lib/mono/gac/System.Drawing/1.0.*/
+	install -m 644 debian/System.Data.dll.config debian/libmono-system-data4.0-cil/usr/lib/mono/gac/System.Data/4.0.*/
 	install -m 644 debian/System.Drawing.dll.config debian/libmono-system2.0-cil/usr/lib/mono/gac/System.Drawing/2.0.*/
-	install -m 644 debian/System.Windows.Forms.dll.config debian/libmono-winforms1.0-cil/usr/lib/mono/gac/System.Windows.Forms/1.0.*/
+	install -m 644 debian/System.Drawing.dll.config debian/libmono-system-drawing4.0-cil/usr/lib/mono/gac/System.Drawing/4.0.*/
 	install -m 644 debian/System.Windows.Forms.dll.config debian/libmono-winforms2.0-cil/usr/lib/mono/gac/System.Windows.Forms/2.0.*/
-	install -m 644 debian/Mono.Cairo.dll.config debian/libmono-cairo1.0-cil/usr/lib/mono/gac/Mono.Cairo/1.0.*/
+	install -m 644 debian/System.Windows.Forms.dll.config debian/libmono-system-windows-forms4.0-cil/usr/lib/mono/gac/System.Windows.Forms/4.0.*/
 	install -m 644 debian/Mono.Cairo.dll.config debian/libmono-cairo2.0-cil/usr/lib/mono/gac/Mono.Cairo/2.0.*/
-	install -m 644 debian/Mono.Data.SqliteClient.dll.config debian/libmono-sqlite1.0-cil/usr/lib/mono/gac/Mono.Data.SqliteClient/1.0.*/
-	install -m 644 debian/Mono.Data.SqliteClient.dll.config debian/libmono-sqlite2.0-cil/usr/lib/mono/gac/Mono.Data.SqliteClient/2.0.*/
-	install -m 644 debian/Mono.Data.Sqlite.dll.config debian/libmono-sqlite1.0-cil/usr/lib/mono/gac/Mono.Data.Sqlite/1.0.*/
-	install -m 644 debian/Mono.Data.Sqlite.dll.config debian/libmono-sqlite2.0-cil/usr/lib/mono/gac/Mono.Data.Sqlite/2.0.*/
-	install -m 644 debian/FirebirdSql.Data.Firebird.dll.config debian/libmono-firebirdsql1.7-cil/usr/lib/mono/gac/FirebirdSql.Data.Firebird/1.7.*/
+	install -m 644 debian/Mono.Cairo.dll.config debian/libmono-cairo4.0-cil/usr/lib/mono/gac/Mono.Cairo/4.0.*/
+	install -m 644 debian/Mono.WebBrowser.dll.config debian/libmono-webbrowser2.0-cil/usr/lib/mono/gac/Mono.WebBrowser/2.0.*/
+	install -m 644 debian/Mono.WebBrowser.dll.config debian/libmono-webbrowser4.0-cil/usr/lib/mono/gac/Mono.WebBrowser/4.0.*/
 	
 	dh_link -i
 	dh_installchangelogs -i -X ChangeLog
@@ -304,71 +261,69 @@ binary-indep: build-stamp install-arch install-indep
 	debian/dh_clistrip -i --dbg-package=mono-dbg
 	dh_compress -i
 	
-	# Hack workaround to allow Ubuntu to run its own preinst (e.g. to kill symlinked docdirs)
-	if [ "$(DISTRO)" = "Ubuntu" ]; then \
-	  for p in $$(dh_listpackages -i); do \
-	    sed "s/#PACKAGENAME#/$$p/g" $(CURDIR)/debian/preinst.ubuntu >> debian/$$p.preinst.debhelper; \
-	  done; \
-	fi
-
 	dh_fixperms -i
 	debian/dh_clifixperms -i
 	dh_installdeb -i
 	#DH_VERBOSE=1 DH_AUTOSCRIPTDIR=$(CURDIR)/debian debian/dh_monoaot -i
 	debian/dh_makeclilibs -i -m 1.0 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono1.0-cil -m 2.6.3 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono2.0-cil -m 2.6.3 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-cairo1.0-cil -m 2.4 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-cairo2.0-cil -m 2.4 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-corlib1.0-cil -m 1.2.2.1 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-cairo4.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-corlib2.0-cil -m 2.6.3 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-data1.0-cil -m 2.4 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-data2.0-cil -m 2.4 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-data-tds1.0-cil -m 2.6.7 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-data-tds2.0-cil -m 2.6.7 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-ldap1.0-cil -m 1.2.6 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-corlib4.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-ldap2.0-cil -m 1.2.6 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-ldap4.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-oracle2.0-cil -m 2.4 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-peapi1.0-cil -m 2.4.2 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-oracle4.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-peapi2.0-cil -m 2.4.2 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-posix1.0-cil -m 2.4 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-peapi4.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-posix2.0-cil -m 2.4 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-relaxng1.0-cil -m 2.6.3 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-posix4.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-relaxng2.0-cil -m 2.6.3  $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-system1.0-cil -m 2.6.3 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-relaxng4.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-system2.0-cil -m 2.6.3 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-system-data1.0-cil -m 1.2.6 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-system4.0-cil -m 2.10.7 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-system-data2.0-cil -m 2.6.3 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-system-data4.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-system-ldap2.0-cil -m 1.2.6 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-system-messaging1.0-cil -m 2.6.3 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-system-ldap4.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-system-messaging2.0-cil -m 2.6.3 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-system-messaging4.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-system-runtime2.0-cil -m 2.4 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-system-runtime4.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-system-web2.0-cil -m 1.9.1 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-security1.0-cil -m 2.4.3 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-system-web4.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-security2.0-cil -m 2.6.7 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-sqlite1.0-cil -m 1.2.6 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-sqlite2.0-cil -m 1.2.6 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-web1.0-cil -m 1.9 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-web2.0-cil -m 2.4 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-webbrowser0.5-cil -m 2.4 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-winforms1.0-cil -m 1.2.6 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-security4.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-sqlite2.0-cil -m 2.10.7 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-sqlite4.0-cil -m 2.10.7 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-winforms2.0-cil -m 2.4 $(DH_INTERNAL_MONO_PARAM)
 	# unstable and preview APIs get tighter clilibs
 	debian/dh_makeclilibs -p libmono-cecil-private-cil -m 2.6.3 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-microsoft-build2.0-cil -m 2.6.7 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-microsoft-build2.0-cil -m 2.10.3 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-microsoft-build-engine4.0-cil -m 2.10.3 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-microsoft-build-framework4.0-cil -m 2.10.7 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-system-web2.0-cil -m 2.10.3 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-system-web4.0-cil -m 2.10.3 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-system-componentmodel-dataannotations4.0-cil -m 2.10.3 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-system-web-extensions4.0-cil -m 2.10.3 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-system-servicemodel-web4.0-cil -m 2.10.3 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-system2.0-cil -m 2.10.3 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-system-core4.0-cil -m 2.10.3 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_makeclilibs -p libmono-wcf3.0-cil -m 2.6.3 $(DH_INTERNAL_MONO_PARAM)
-	debian/dh_makeclilibs -p libmono-debugger-soft0.0-cil -m 2.6.7 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-debugger-soft2.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_makeclilibs -p libmono-debugger-soft4.0-cil -m 2.10.1 $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_clideps -i -l debian/tmp $(DH_INTERNAL_MONO_PARAM)
 	#DH_VERBOSE=1 debian/dh_clideps -i -l debian/tmp $(DH_INTERNAL_MONO_PARAM)
 	# mono-1.0/2.0-gac needs special runtime dep, to prevent circular dep (mono-runtime <-> mono-1.0/2.0-gac)
-	debian/dh_clideps -p mono-1.0-gac -r $(DH_INTERNAL_MONO_PARAM)
 	debian/dh_clideps -p mono-2.0-gac -r $(DH_INTERNAL_MONO_PARAM)
+	debian/dh_clideps -p mono-4.0-gac -r $(DH_INTERNAL_MONO_PARAM)
 	dh_gencontrol -i -- -Vmono:upversion=$(UPVERSION) -Vmono:next-upversion=$(NEXT_UPVERSION) \
-	  $(FIREBIRDSQL_VARS) $(MDB_VARS)
+	  $(MDB_VARS)
 	dh_md5sums -i
 	dh_builddeb -i
 
-binary-arch: build-stamp install-arch test-stamp
+binary-arch: build-stamp install-stamp test-stamp
 	dh_testdir
 	dh_testroot
 	
@@ -387,22 +342,16 @@ binary-arch: build-stamp install-arch test-stamp
 	dh_installexamples -s
 	dh_installexamples -pmono-jay $(CURDIR)/mcs/jay/skeleton.cs
 	dh_strip -pmono-runtime --dbg-package=mono-runtime-dbg
-	dh_strip -plibmono0 --dbg-package=libmono0-dbg
-	dh_strip -s
+	dh_strip -plibmono-2.0-1 --dbg-package=libmono-2.0-1-dbg
+	dh_strip -s -Xbin/mono-sgen
 	dh_compress -s -Xskeleton.cs
 
-	# Hack workaround to allow Ubuntu to run its own preinst (e.g. to kill symlinked docdirs)
-	if [ "$(DISTRO)" = "Ubuntu" ]; then \
-	  for p in $$(dh_listpackages -a); do \
-	    sed "s/#PACKAGENAME#/$$p/g" $(CURDIR)/debian/preinst.ubuntu >> debian/$$p.preinst.debhelper; \
-	  done; \
-	fi
-
 	dh_fixperms -s
+	dpkg-gensymbols -plibmono-2.0-1 -edebian/tmp/usr/lib/libmono-2.0.so.1 -c4
 	dh_makeshlibs -s -V
-	dh_makeshlibs -plibmono0 -V 'libmono0 (>= $(UPVERSION))'
+	dh_makeshlibs -plibmono-2.0-1 -V 'libmono-2.0-1 (>= $(UPVERSION))'
 	dh_installdeb -s
-	dh_shlibdeps -s -Xlibmono-profiler-cov -ldebian/libmono0/usr/lib
+	dh_shlibdeps -s -Xlibmono-profiler-cov -ldebian/libmono-2.0-1/usr/lib
 	dh_gencontrol -s
 	dh_md5sums -s
 	dh_builddeb -s

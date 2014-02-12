@@ -214,8 +214,14 @@ namespace System.Net.Sockets
 				throw new ArgumentOutOfRangeException("offset+size exceeds the size of buffer");
 			}
 
+			Socket s = socket;
+
+			if (s == null) {
+				throw new IOException("Connection closed");
+			}
+
 			try {
-				retval = socket.BeginReceive (buffer, offset, size, 0, callback, state);
+				retval = s.BeginReceive (buffer, offset, size, 0, callback, state);
 			} catch (Exception e) {
 				throw new IOException ("BeginReceive failure", e);
 			}
@@ -240,8 +246,14 @@ namespace System.Net.Sockets
 				throw new ArgumentOutOfRangeException("offset+size exceeds the size of buffer");
 			}
 
+			Socket s = socket;
+
+			if (s == null) {
+				throw new IOException("Connection closed");
+			}
+
 			try {
-				retval = socket.BeginSend (buffer, offset, size, 0, callback, state);
+				retval = s.BeginSend (buffer, offset, size, 0, callback, state);
 			} catch {
 				throw new IOException ("BeginWrite failure");
 			}
@@ -303,6 +315,9 @@ namespace System.Net.Sockets
 			}
 			socket = null;
 			access = 0;
+
+			if (disposing)
+				GC.SuppressFinalize (this);
 		}
 
 		public override int EndRead (IAsyncResult ar)
@@ -313,8 +328,14 @@ namespace System.Net.Sockets
 			if (ar == null)
 				throw new ArgumentNullException ("async result is null");
 
+			Socket s = socket;
+
+			if (s == null) {
+				throw new IOException("Connection closed");
+			}
+
 			try {
-				res = socket.EndReceive (ar);
+				res = s.EndReceive (ar);
 			} catch (Exception e) {
 				throw new IOException ("EndRead failure", e);
 			}
@@ -327,8 +348,14 @@ namespace System.Net.Sockets
 			if (ar == null)
 				throw new ArgumentNullException ("async result is null");
 
+			Socket s = socket;
+
+			if (s == null) {
+				throw new IOException("Connection closed");
+			}
+
 			try {
-				socket.EndSend (ar);
+				s.EndSend (ar);
 			} catch (Exception e) {
 				throw new IOException ("EndWrite failure", e);
 			}
@@ -339,11 +366,12 @@ namespace System.Net.Sockets
 			// network streams are non-buffered, this is a no-op
 		}
 
+#if !NET_2_0
 		void IDisposable.Dispose ()
 		{
 			Dispose (true);
-			GC.SuppressFinalize (this);
 		}
+#endif
 
 		public override int Read ([In,Out] byte [] buffer, int offset, int size)
 		{
@@ -359,8 +387,14 @@ namespace System.Net.Sockets
 				throw new ArgumentOutOfRangeException("offset+size exceeds the size of buffer");
 			}
 
+			Socket s = socket;
+
+			if (s == null) {
+				throw new IOException("Connection closed");
+			}
+
 			try {
-				res = socket.Receive (buffer, offset, size, 0);
+				res = s.Receive (buffer, offset, size, 0);
 			} catch (Exception e) {
 				throw new IOException ("Read failure", e);
 			}
@@ -394,10 +428,16 @@ namespace System.Net.Sockets
 			if (size < 0 || size > buffer.Length - offset)
 				throw new ArgumentOutOfRangeException("offset+size exceeds the size of buffer");
 
+			Socket s = socket;
+
+			if (s == null) {
+				throw new IOException("Connection closed");
+			}
+
 			try {
 				int count = 0;
 				while (size - count > 0) {
-					count += socket.Send (buffer, offset + count, size - count, 0);
+					count += s.Send (buffer, offset + count, size - count, 0);
 				}
 			} catch (Exception e) {
 				throw new IOException ("Write failure", e); 

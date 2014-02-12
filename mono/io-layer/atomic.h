@@ -92,7 +92,7 @@ static inline gpointer InterlockedCompareExchangePointer(volatile gpointer *dest
 	gpointer old;
 
 	__asm__ __volatile__ ("lock; "
-#ifdef __x86_64__
+#if defined(__x86_64__)  && !defined(__native_client__)
 			      "cmpxchgq"
 #else
 			      "cmpxchgl"
@@ -154,7 +154,7 @@ static inline gpointer InterlockedExchangePointer(volatile gpointer *val,
 	gpointer ret;
 	
 	__asm__ __volatile__ ("1:; lock; "
-#ifdef __x86_64__
+#if defined(__x86_64__)  && !defined(__native_client__)
 			      "cmpxchgq"
 #else
 			      "cmpxchgl"
@@ -746,10 +746,23 @@ static inline gint32 InterlockedExchangeAdd(volatile gint32 *dest, gint32 add)
 
 static inline gint32 InterlockedCompareExchange(volatile gint32 *dest, gint32 exch, gint32 comp)
 {
-#ifdef __thumb__
-	return __sync_val_compare_and_swap (dest, comp, exch);
+#if defined(__ARM_ARCH_6__) || defined(__ARM_ARCH_7A__) || defined(__ARM_ARCH_7__)
+	gint32 ret, tmp;
+	__asm__ __volatile__ (	"1:\n"
+				"mov	%0, #0\n"
+				"ldrex %1, [%2]\n"
+				"teq	%1, %3\n"
+				"it eq\n"
+				"strexeq %0, %4, [%2]\n"
+				"teq %0, #0\n"
+				"bne 1b\n"
+				: "=&r" (tmp), "=&r" (ret)
+				: "r" (dest), "r" (comp), "r" (exch)
+				: "memory", "cc");
+
+	return ret;
 #else
-	int a, b;
+	gint32 a, b;
 
 	__asm__ __volatile__ (    "0:\n\t"
 				  "ldr %1, [%2]\n\t"
@@ -766,13 +779,26 @@ static inline gint32 InterlockedCompareExchange(volatile gint32 *dest, gint32 ex
 				  : "cc", "memory");
 
 	return a;
-#endif /* !__thumb__ */
+#endif
 }
 
 static inline gpointer InterlockedCompareExchangePointer(volatile gpointer *dest, gpointer exch, gpointer comp)
 {
-#ifdef __thumb__
-	return __sync_val_compare_and_swap (dest, comp, exch);
+#if defined(__ARM_ARCH_6__) || defined(__ARM_ARCH_7A__) || defined(__ARM_ARCH_7__)
+	gpointer ret, tmp;
+	__asm__ __volatile__ (	"1:\n"
+				"mov	%0, #0\n"
+				"ldrex %1, [%2]\n"
+				"teq	%1, %3\n"
+				"it eq\n"
+				"strexeq %0, %4, [%2]\n"
+				"teq %0, #0\n"
+				"bne 1b\n"
+				: "=&r" (tmp), "=&r" (ret)
+				: "r" (dest), "r" (comp), "r" (exch)
+				: "memory", "cc");
+
+	return ret;
 #else
 	gpointer a, b;
 
@@ -796,10 +822,21 @@ static inline gpointer InterlockedCompareExchangePointer(volatile gpointer *dest
 
 static inline gint32 InterlockedIncrement(volatile gint32 *dest)
 {
-#ifdef __thumb__
-	return __sync_add_and_fetch (dest, 1);
+#if defined(__ARM_ARCH_6__) || defined(__ARM_ARCH_7A__) || defined(__ARM_ARCH_7__)
+	gint32 ret, flag;
+	__asm__ __volatile__ (	"1:\n"
+				"ldrex %0, [%2]\n"
+				"add %0, %0, %3\n"
+				"strex %1, %0, [%2]\n"
+				"teq %1, #0\n"
+				"bne 1b\n"
+				: "=&r" (ret), "=&r" (flag)
+				: "r" (dest), "r" (1)
+				: "memory", "cc");
+
+	return ret;
 #else
-	int a, b, c;
+	gint32 a, b, c;
 
 	__asm__ __volatile__ (  "0:\n\t"
 				"ldr %0, [%3]\n\t"
@@ -818,10 +855,21 @@ static inline gint32 InterlockedIncrement(volatile gint32 *dest)
 
 static inline gint32 InterlockedDecrement(volatile gint32 *dest)
 {
-#ifdef __thumb__
-	return __sync_sub_and_fetch (dest, 1);
+#if defined(__ARM_ARCH_6__) || defined(__ARM_ARCH_7A__) || defined(__ARM_ARCH_7__)
+	gint32 ret, flag;
+	__asm__ __volatile__ (	"1:\n"
+				"ldrex %0, [%2]\n"
+				"sub %0, %0, %3\n"
+				"strex %1, %0, [%2]\n"
+				"teq %1, #0\n"
+				"bne 1b\n"
+				: "=&r" (ret), "=&r" (flag)
+				: "r" (dest), "r" (1)
+				: "memory", "cc");
+
+	return ret;
 #else
-	int a, b, c;
+	gint32 a, b, c;
 
 	__asm__ __volatile__ (  "0:\n\t"
 				"ldr %0, [%3]\n\t"
@@ -840,10 +888,20 @@ static inline gint32 InterlockedDecrement(volatile gint32 *dest)
 
 static inline gint32 InterlockedExchange(volatile gint32 *dest, gint32 exch)
 {
-#ifdef __thumb__
-	return __sync_lock_test_and_set (dest, exch);
+#if defined(__ARM_ARCH_6__) || defined(__ARM_ARCH_7A__) || defined(__ARM_ARCH_7__)
+	gint32 ret, flag;
+	__asm__ __volatile__ (
+			      "1:\n"
+			      "ldrex %0, [%3]\n"
+			      "strex %1, %2, [%3]\n"
+			      "teq %1, #0\n"
+			      "bne 1b\n"
+			      : "=&r" (ret), "=&r" (flag)
+			      : "r" (exch), "r" (dest)
+			      : "memory", "cc");
+	return ret;
 #else
-	int a;
+	gint32 a;
 
 	__asm__ __volatile__ (  "swp %0, %2, [%1]"
 				: "=&r" (a)
@@ -855,8 +913,18 @@ static inline gint32 InterlockedExchange(volatile gint32 *dest, gint32 exch)
 
 static inline gpointer InterlockedExchangePointer(volatile gpointer *dest, gpointer exch)
 {
-#ifdef __thumb__
-	return __sync_lock_test_and_set (dest, exch);
+#if defined(__ARM_ARCH_6__) || defined(__ARM_ARCH_7A__) || defined(__ARM_ARCH_7__)
+	gpointer ret, flag;
+	__asm__ __volatile__ (
+			      "1:\n"
+			      "ldrex %0, [%3]\n"
+			      "strex %1, %2, [%3]\n"
+			      "teq %1, #0\n"
+			      "bne 1b\n"
+			      : "=&r" (ret), "=&r" (flag)
+			      : "r" (exch), "r" (dest)
+			      : "memory", "cc");
+	return ret;
 #else
 	gpointer a;
 
@@ -870,8 +938,19 @@ static inline gpointer InterlockedExchangePointer(volatile gpointer *dest, gpoin
 
 static inline gint32 InterlockedExchangeAdd(volatile gint32 *dest, gint32 add)
 {
-#ifdef __thumb__
-	return __sync_fetch_and_add (dest, add);
+#if defined(__ARM_ARCH_6__) || defined(__ARM_ARCH_7A__) || defined(__ARM_ARCH_7__)
+	gint32 ret, tmp, flag;
+	__asm__ __volatile__ (	"1:\n"
+				"ldrex %0, [%3]\n"
+				"add %1, %0, %4\n"
+				"strex %2, %1, [%3]\n"
+				"teq %2, #0\n"
+				"bne 1b\n"
+				: "=&r" (ret), "=&r" (tmp), "=&r" (flag)
+				: "r" (dest), "r" (add)
+				: "memory", "cc");
+
+	return ret;
 #else
 	int a, b, c;
 

@@ -31,6 +31,7 @@ using System.Collections;
 using System.Collections.Specialized;
 using System.Configuration;
 using System.IO;
+using System.Reflection;
 using System.Runtime.Serialization;
 using System.Globalization;
 #if NET_2_0
@@ -40,7 +41,7 @@ using System.Net.Cache;
 using System.Security.Principal;
 #endif
 
-#if MONOTOUCH
+#if NET_2_1
 using ConfigurationException = System.ArgumentException;
 
 namespace System.Net.Configuration {
@@ -50,30 +51,46 @@ namespace System.Net.Configuration {
 
 namespace System.Net 
 {
+#if MOONLIGHT
+	internal abstract class WebRequest : ISerializable {
+#else
 	[Serializable]
-	public abstract class WebRequest : MarshalByRefObject, ISerializable
-	{
+	public abstract class WebRequest : MarshalByRefObject, ISerializable {
+#endif
 		static HybridDictionary prefixes = new HybridDictionary ();
 #if NET_2_0
 		static bool isDefaultWebProxySet;
 		static IWebProxy defaultWebProxy;
 		static RequestCachePolicy defaultCachePolicy;
+		static MethodInfo cfGetDefaultProxy;
 #endif
 		
 		// Constructors
 		
 		static WebRequest ()
 		{
+			if (Platform.IsMacOS) {
 #if MONOTOUCH
+				Type type = Type.GetType ("MonoTouch.CoreFoundation.CFNetwork, monotouch");
+#else
+				Type type = Type.GetType ("MonoMac.CoreFoundation.CFNetwork, monomac");
+#endif
+				if (type != null)
+					cfGetDefaultProxy = type.GetMethod ("GetDefaultProxy");
+			}
+			
+#if NET_2_1
 			AddPrefix ("http", typeof (HttpRequestCreator));
 			AddPrefix ("https", typeof (HttpRequestCreator));
+	#if MOBILE
 			AddPrefix ("file", typeof (FileWebRequestCreator));
 			AddPrefix ("ftp", typeof (FtpRequestCreator));
+	#endif
 #else
 	#if NET_2_0
 			defaultCachePolicy = new HttpRequestCachePolicy (HttpRequestCacheLevel.NoCacheNoStore);
 	#endif
-#if NET_2_0 && CONFIGURATION_DEP
+	#if NET_2_0 && CONFIGURATION_DEP
 			object cfg = ConfigurationManager.GetSection ("system.net/webRequestModules");
 			WebRequestModulesSection s = cfg as WebRequestModulesSection;
 			if (s != null) {
@@ -82,7 +99,7 @@ namespace System.Net
 					AddPrefix (el.Prefix, el.Type);
 				return;
 			}
-#endif
+	#endif
 			ConfigurationSettings.GetConfig ("system.net/webRequestModules");
 #endif
 		}
@@ -162,7 +179,7 @@ namespace System.Net
 			set { throw GetMustImplement (); }
 		}
 		
-#if NET_2_0
+#if NET_2_0 && !MOONLIGHT
 		public TokenImpersonationLevel ImpersonationLevel {
 			get { throw GetMustImplement (); }
 			set { throw GetMustImplement (); }
@@ -229,10 +246,10 @@ namespace System.Net
 		[MonoTODO("Needs to respect Module, Proxy.AutoDetect, and Proxy.ScriptLocation config settings")]
 		static IWebProxy GetDefaultWebProxy ()
 		{
-			WebProxy p = null;
-			
 #if CONFIGURATION_DEP
 			DefaultProxySection sec = ConfigurationManager.GetSection ("system.net/defaultProxy") as DefaultProxySection;
+			WebProxy p;
+			
 			if (sec == null)
 				return GetSystemWebProxy ();
 			
@@ -248,8 +265,14 @@ namespace System.Net
 			
 			if (pe.BypassOnLocal != ProxyElement.BypassOnLocalValues.Unspecified)
 				p.BypassProxyOnLocal = (pe.BypassOnLocal == ProxyElement.BypassOnLocalValues.True);
-#endif
+				
+			foreach(BypassElement elem in sec.BypassList)
+				p.BypassArrayList.Add(elem.Address);
+			
 			return p;
+#else
+			return GetSystemWebProxy ();
+#endif
 		}
 #endif
 
@@ -336,9 +359,25 @@ namespace System.Net
 							uri = builder.Uri;
 						}
 					}
-					return new WebProxy (uri);
+					
+					string[] bypassList=null;
+				        string bypass = Environment.GetEnvironmentVariable ("no_proxy");
+				
+				        if (bypass == null)
+				        	bypass = Environment.GetEnvironmentVariable ("NO_PROXY");
+				
+				        if (bypass != null) {
+				                bypass = bypass.Remove (bypass.IndexOf("*.local"), 7);
+				                bypassList = bypass.Split (new char[]{','}, StringSplitOptions.RemoveEmptyEntries);
+				            }
+				
+				        return new WebProxy (uri, false, bypassList);
 				} catch (UriFormatException) { }
 			}
+			
+			if (cfGetDefaultProxy != null)
+				return (IWebProxy) cfGetDefaultProxy.Invoke (null, null);
+			
 			return new WebProxy ();
 		}
 #endif

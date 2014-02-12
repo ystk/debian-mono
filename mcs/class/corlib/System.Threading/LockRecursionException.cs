@@ -25,7 +25,7 @@
  */
 
 
-#if NET_4_0 || BOOTSTRAP_NET_4_0
+#if NET_4_0 || MOBILE
 
 using System;
 using System.Runtime.Serialization;
@@ -34,7 +34,9 @@ using System.Runtime.CompilerServices;
 namespace System.Threading
 {
 	[Serializable]
+#if !MOBILE
 	[TypeForwardedFrom (Consts.AssemblySystemCore_3_5)]
+#endif
 	public class LockRecursionException : Exception
 	{
 		public LockRecursionException () 
@@ -47,13 +49,13 @@ namespace System.Threading
 		{
 		}
 
-		public LockRecursionException (string message, Exception e) 
-			: base (message, e)
+		public LockRecursionException (string message, Exception innerException) 
+			: base (message, innerException)
 		{
 		}
 
-		protected LockRecursionException (SerializationInfo info, StreamingContext sc)
-			 : base (info, sc)
+		protected LockRecursionException (SerializationInfo info, StreamingContext context)
+			 : base (info, context)
 		{
 		}
 	}

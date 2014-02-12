@@ -2,9 +2,11 @@
 // System.Net.NetworkCredential.cs
 //
 // Author: Duncan Mak (duncan@ximian.com)
+// Author: Rolf Bjarne KVinge (rolf@xamarin.com)
 //
 // (C) Ximian, Inc.
 // Copyright (C) 2010 Novell, Inc (http://www.novell.com)
+// Copyright (C) 2011 Xamarin Inc (http://www.xamarin.com)
 //
 // Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
@@ -26,10 +28,12 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+using System.Security;
+
 namespace System.Net
 {
 	public class NetworkCredential : ICredentials
-#if NET_2_0 && !NET_2_1
+#if !MOONLIGHT
 					, ICredentialsByHost
 #endif
 	{
@@ -38,6 +42,10 @@ namespace System.Net
 		string password;
 		string domain;
 		
+#if NET_4_0
+		SecureString securePassword;
+#endif
+
 		// Constructors
 		public NetworkCredential ()
 		{
@@ -59,26 +67,39 @@ namespace System.Net
 		// Properties
 
 		public string Domain {
-			get { return domain == null ? String.Empty : domain; }
+			get { return domain ?? String.Empty; }
 			set { domain = value; }
 		}
 
 		public string UserName {
-			get { return userName == null ? String.Empty : userName; }
+			get { return userName ?? String.Empty; }
 			set { userName = value; }			
 		}
 
 		public string Password {
-			get { return password == null ? String.Empty : password; }
+			get { return password ?? String.Empty; }
 			set { password = value; }
 		}
+
+#if NET_4_0
+		public SecureString SecurePassword {
+			get { return securePassword; }
+			set {
+				if (value == null) {
+					securePassword = new SecureString ();
+				} else {
+					securePassword = value;
+				}
+			}
+		}
+#endif
 
 		public NetworkCredential GetCredential (Uri uri, string authType)
 		{
 			return this;
 		}
 
-#if NET_2_0 && !NET_2_1
+#if !MOONLIGHT
 		public NetworkCredential GetCredential (string host, int port, string authenticationType)
 		{
 			return this;

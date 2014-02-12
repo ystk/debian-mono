@@ -30,42 +30,40 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if NET_2_0
 using System;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using System.Security.Permissions;
+using System.Diagnostics;
 
 namespace System.Collections.Generic
 {
 	[Serializable, ComVisible (false)]
+	[DebuggerDisplay ("Count={Count}")]
+	[DebuggerTypeProxy (typeof (CollectionDebuggerView<>))]
 	public class LinkedList <T> : ICollection <T>, ICollection, ISerializable, IDeserializationCallback
 	{
 		const string DataArrayKey = "DataArray";
 		const string VersionKey = "version";		
 		uint count, version;
-		object syncRoot;
+
 		// Internally a circular list - first.back == last
 		internal LinkedListNode <T> first;
 		internal SerializationInfo si;
 		
 		public LinkedList ()
 		{
-			syncRoot = new object ();
-			first = null;
-			count = version = 0;
 		}
 		
-		public LinkedList (IEnumerable <T> collection) : this ()
+		public LinkedList (IEnumerable <T> collection)
 		{
 			foreach (T item in collection)
 				AddLast (item);
 		}
 		
-		protected LinkedList (SerializationInfo info, StreamingContext context) : this ()
+		protected LinkedList (SerializationInfo info, StreamingContext context)
 		{
 			si = info;
-			syncRoot = new object ();
 		}
 		
 		void VerifyReferencedNode (LinkedListNode <T> node)
@@ -184,9 +182,8 @@ namespace System.Collections.Generic
 		
 		public void Clear ()
 		{
-			count = 0;
-			first = null;
-			version++;
+			while (first != null)
+				Remove (first);
 		}
 		
 		public bool Contains (T value)
@@ -367,7 +364,7 @@ namespace System.Collections.Generic
 		}
 		
 		object ICollection.SyncRoot {
-			get { return syncRoot; }
+			get { return this; }
 		}
 
 		[Serializable, StructLayout (LayoutKind.Sequential)]
@@ -499,4 +496,3 @@ namespace System.Collections.Generic
 		}
 	}
 }
-#endif

@@ -2776,6 +2776,7 @@ namespace System.Windows.Forms
 							int image_width = control.SmallImageList.ImageSize.Width + 5;
 							int text_width = (int)dc.MeasureString (col.Text, control.Font).Width;
 							int x_origin = rect.X;
+							int y_origin = rect.Y + ((rect.Height - control.SmallImageList.ImageSize.Height) / 2);
 
 							switch (col.TextAlign) {
 								case HorizontalAlignment.Left:
@@ -2791,7 +2792,7 @@ namespace System.Windows.Forms
 							if (x_origin < rect.X)
 								x_origin = rect.X;
 
-							control.SmallImageList.Draw (dc, new Point (x_origin, rect.Y), image_index);
+							control.SmallImageList.Draw (dc, new Point (x_origin, y_origin), image_index);
 							rect.X += image_width;
 							rect.Width -= image_width;
 						}
@@ -4286,7 +4287,8 @@ namespace System.Windows.Forms
 			case 2: // Marquee
 				if (XplatUI.ThemesEnabled) {
 					int ms_diff = (int) (DateTime.Now - ctrl.start).TotalMilliseconds;
-					double percent_done = (double) ms_diff % (double)ctrl.MarqueeAnimationSpeed / (double)ctrl.MarqueeAnimationSpeed;
+					double percent_done = (double) ms_diff / ProgressBarMarqueeSpeedScaling 
+						% (double)ctrl.MarqueeAnimationSpeed / (double)ctrl.MarqueeAnimationSpeed;
 					max_blocks = 5;
 					start_pixel = client_area.X + (int) (client_area.Width * percent_done);
 				}
@@ -4351,6 +4353,8 @@ namespace System.Windows.Forms
 				return new Size (100, ProgressBarDefaultHeight);
 			}
 		}
+
+		public const double ProgressBarMarqueeSpeedScaling = 15;
 
 		#endregion	// ProgressBar
 
@@ -5526,6 +5530,16 @@ namespace System.Windows.Forms
 			balloon_window.Icon = icon;
 			balloon_window.Timeout = timeout;
 			balloon_window.Show ();
+		}
+
+		public override void HideBalloonWindow (IntPtr handle)
+		{
+			if (balloon_window == null || balloon_window.OwnerHandle != handle)
+				return;
+
+			balloon_window.Close ();
+			balloon_window.Dispose ();
+			balloon_window = null;
 		}
 
 		private const int balloon_iconsize = 16;

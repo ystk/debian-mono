@@ -31,6 +31,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
 using Mono.XBuild.Utilities;
@@ -44,7 +45,7 @@ namespace Microsoft.Build.BuildEngine {
 		const string		defaultTasksProjectName = "Microsoft.Common.tasks";
 		EventSource		eventSource;
 		bool			buildStarted;
-		ToolsetDefinitionLocations toolsetLocations;
+		//ToolsetDefinitionLocations toolsetLocations;
 		BuildPropertyGroup	global_properties;
 		//IDictionary		importedProjects;
 		List <ILogger>		loggers;
@@ -72,7 +73,7 @@ namespace Microsoft.Build.BuildEngine {
 		public Engine (ToolsetDefinitionLocations locations)
 			: this (ToolLocationHelper.GetPathToDotNetFramework (TargetDotNetFrameworkVersion.Version20))
 		{
-			toolsetLocations = locations;
+			//toolsetLocations = locations;
 		}
 		
 		public Engine (BuildPropertyGroup globalProperties)
@@ -85,7 +86,7 @@ namespace Microsoft.Build.BuildEngine {
 			: this (ToolLocationHelper.GetPathToDotNetFramework (TargetDotNetFrameworkVersion.Version20))
 		{
 			this.global_properties = globalProperties;
-			toolsetLocations = locations;
+			//toolsetLocations = locations;
 		}
 
 		// engine should be invoked with path where binary files are
@@ -104,7 +105,6 @@ namespace Microsoft.Build.BuildEngine {
 			this.Toolsets = new ToolsetCollection ();
 			LoadDefaultToolsets ();
 			defaultTasksTableByToolsVersion = new Dictionary<string, TaskDatabase> ();
-			GetDefaultTasks (DefaultToolsVersion);
 		}
 
 		//FIXME: should be loaded from config file
@@ -119,9 +119,6 @@ namespace Microsoft.Build.BuildEngine {
 #if NET_4_0
 			Toolsets.Add (new Toolset ("4.0",
 						ToolLocationHelper.GetPathToDotNetFramework (TargetDotNetFrameworkVersion.Version40)));
-#else
-			Toolsets.Add (new Toolset ("4.0",
-						ToolLocationHelper.GetPathToDotNetFramework (TargetDotNetFrameworkVersion.Version35)));
 #endif
 		}
 		
@@ -130,6 +127,7 @@ namespace Microsoft.Build.BuildEngine {
 		{
 			if (project == null)
 				throw new ArgumentException ("project");
+			builtTargetsOutputByName.Clear ();
 			return project.Build ();
 		}
 		
@@ -167,6 +165,9 @@ namespace Microsoft.Build.BuildEngine {
 				throw new ArgumentException ("project");
 			if (targetNames == null)
 				return false;
+
+			if ((buildFlags & BuildSettings.DoNotResetPreviouslyBuiltTargets) != BuildSettings.DoNotResetPreviouslyBuiltTargets)
+				builtTargetsOutputByName.Clear ();
 
 			if (defaultToolsVersion != null)
 				// it has been explicitly set, xbuild does this..
@@ -228,13 +229,42 @@ namespace Microsoft.Build.BuildEngine {
 					      IDictionary targetOutputs,
 					      BuildSettings buildFlags, string toolsVersion)
 		{
+			bool result = false;
+			try {
+				StartEngineBuild ();
+				result = BuildProjectFileInternal (projectFile, targetNames, globalProperties, targetOutputs, buildFlags, toolsVersion);
+				return result;
+			} catch (InvalidProjectFileException ie) {
+				this.LogErrorWithFilename (projectFile, ie.Message);
+				this.LogMessage (MessageImportance.Low, String.Format ("{0}: {1}", projectFile, ie.ToString ()));
+				return false;
+			} catch (Exception e) {
+				if (buildStarted) {
+					this.LogErrorWithFilename (projectFile, e.Message);
+					this.LogMessage (MessageImportance.Low, String.Format ("{0}: {1}", projectFile, e.ToString ()));
+				}
+				throw;
+			} finally {
+				EndEngineBuild (result);
+			}
+		}
+
+		bool BuildProjectFileInternal (string projectFile,
+					      string[] targetNames,
+					      BuildPropertyGroup globalProperties,
+					      IDictionary targetOutputs,
+					      BuildSettings buildFlags, string toolsVersion)
+		{
+
+			if ((buildFlags & BuildSettings.DoNotResetPreviouslyBuiltTargets) != BuildSettings.DoNotResetPreviouslyBuiltTargets)
+				builtTargetsOutputByName.Clear ();
+
 			Project project;
 
-			if (projects.ContainsKey (projectFile)) {
-				project = (Project) projects [projectFile];
-			} else {
+			bool newProject = false;
+			if (!projects.TryGetValue (projectFile, out project)) {
 				project = CreateNewProject ();
-				project.Load (projectFile);
+				newProject = true;
 			}
 
 			BuildPropertyGroup engine_old_grp = null;
@@ -247,18 +277,30 @@ namespace Microsoft.Build.BuildEngine {
 				// ones explicitlcur_y specified here
 				foreach (BuildProperty bp in globalProperties)
 					project.GlobalProperties.AddProperty (bp);
-				project.NeedToReevaluate ();
+
+				if (!newProject)
+					project.NeedToReevaluate ();
 			}
 
+			if (newProject)
+				project.Load (projectFile);
+
 			try {
+				string oldProjectToolsVersion = project.ToolsVersion;
 				if (String.IsNullOrEmpty (toolsVersion) && defaultToolsVersion != null)
-					// it has been explicitly set, xbuild does this..
-					//FIXME: should this be cleared after building?
+					// no tv specified, let the project inherit it from the
+					// engine. 'defaultToolsVersion' will be effective only
+					// it has been overridden. Otherwise, the project's own
+					// tv will be used.
 					project.ToolsVersion = defaultToolsVersion;
 				else
 					project.ToolsVersion = toolsVersion;
 
-				return project.Build (targetNames, targetOutputs, buildFlags);
+				try {
+					return project.Build (targetNames, targetOutputs, buildFlags);
+				} finally {
+					project.ToolsVersion = oldProjectToolsVersion;
+				}
 			} finally {
 				if (globalProperties != null) {
 					GlobalProperties = engine_old_grp;
@@ -294,8 +336,10 @@ namespace Microsoft.Build.BuildEngine {
 
 		internal void RemoveLoadedProject (Project p)
 		{
-			if (p.FullFileName != String.Empty)
+			if (!String.IsNullOrEmpty (p.FullFileName)) {
+				ClearBuiltTargetsForProject (p);
 				projects.Remove (p.FullFileName);
+			}
 		}
 
 		internal void AddLoadedProject (Project p)
@@ -314,8 +358,7 @@ namespace Microsoft.Build.BuildEngine {
 			
 			project.CheckUnloaded ();
 			
-			if (project.FullFileName != String.Empty)
-				projects.Remove (project.FullFileName);
+			RemoveLoadedProject (project);
 			
 			project.Unload ();
 		}
@@ -350,12 +393,25 @@ namespace Microsoft.Build.BuildEngine {
 			loggers.Clear ();
 		}
 
-		internal void StartProjectBuild (Project project, string [] target_names)
+		void StartEngineBuild ()
 		{
 			if (!buildStarted) {
 				LogBuildStarted ();
 				buildStarted = true;
 			}
+		}
+
+		void EndEngineBuild (bool succeeded)
+		{
+			if (buildStarted && currentlyBuildingProjectsStack.Count == 0) {
+				LogBuildFinished (succeeded);
+				buildStarted = false;
+			}
+		}
+
+		internal void StartProjectBuild (Project project, string [] target_names)
+		{
+			StartEngineBuild ();
 
 			if (currentlyBuildingProjectsStack.Count == 0 ||
 				String.Compare (currentlyBuildingProjectsStack.Peek ().FullFileName, project.FullFileName) != 0)
@@ -381,10 +437,15 @@ namespace Microsoft.Build.BuildEngine {
 				String.Compare (top_project.FullFileName, currentlyBuildingProjectsStack.Peek ().FullFileName) != 0)
 				LogProjectFinished (top_project, succeeded);
 
-			if (currentlyBuildingProjectsStack.Count == 0) {
-				LogBuildFinished (succeeded);
-				buildStarted = false;
-			}
+			EndEngineBuild (succeeded);
+		}
+
+		internal void ClearBuiltTargetsForProject (Project project)
+		{
+			string project_key = project.GetKeyForTarget (String.Empty, false);
+			var to_remove_keys = BuiltTargetsOutputByName.Keys.Where (key => key.StartsWith (project_key)).ToList ();
+			foreach (string to_remove_key in to_remove_keys)
+				BuiltTargetsOutputByName.Remove (to_remove_key);
 		}
 
 		void LogProjectStarted (Project project, string [] target_names)
@@ -430,7 +491,7 @@ namespace Microsoft.Build.BuildEngine {
 
 			var toolset = Toolsets [toolsVersion];
 			if (toolset == null)
-				throw new Exception ("Unknown toolsversion: " + toolsVersion);
+				throw new UnknownToolsVersionException (toolsVersion);
 
 			string toolsPath = toolset.ToolsPath;
 			string tasksFile = Path.Combine (toolsPath, defaultTasksProjectName);
@@ -494,18 +555,20 @@ namespace Microsoft.Build.BuildEngine {
 
 		public string DefaultToolsVersion {
 			get {
-				if (String.IsNullOrEmpty (defaultToolsVersion))
-#if NET_4_0
-					return "4.0";
-#elif NET_3_5
-					return "3.5";
-#else
-					return "2.0";
-#endif
-				
-				return defaultToolsVersion;
+				// This is used as the fall back version if the
+				// project can't find a version to use
+				// Hard-coded to 2.0, so it allows even vs2005 projects
+				// to build correctly, as they won't have a ToolsVersion
+				// set!
+				return String.IsNullOrEmpty (defaultToolsVersion)
+						? "2.0"
+						: defaultToolsVersion;
 			}
-			set { defaultToolsVersion = value; }
+			set {
+				if (Toolsets [value] == null)
+					throw new UnknownToolsVersionException (value);
+				defaultToolsVersion = value;
+			}
 		}
 		
 		public bool IsBuilding {

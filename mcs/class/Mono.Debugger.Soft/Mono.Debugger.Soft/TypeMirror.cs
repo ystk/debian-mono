@@ -442,7 +442,7 @@ namespace Mono.Debugger.Soft
 			return GetValues (new FieldInfoMirror [] { field }) [0];
 		}
 
-		public Value[] GetValues (IList<FieldInfoMirror> fields) {
+		public Value[] GetValues (IList<FieldInfoMirror> fields, ThreadMirror thread) {
 			if (fields == null)
 				throw new ArgumentNullException ("fields");
 			foreach (FieldInfoMirror f in fields) {
@@ -454,13 +454,27 @@ namespace Mono.Debugger.Soft
 			for (int i = 0; i < fields.Count; ++i)
 				ids [i] = fields [i].Id;
 			try {
-				return vm.DecodeValues (vm.conn.Type_GetValues (id, ids));
+				return vm.DecodeValues (vm.conn.Type_GetValues (id, ids, thread !=  null ? thread.Id : 0));
 			} catch (CommandException ex) {
 				if (ex.ErrorCode == ErrorCode.INVALID_FIELDID)
 					throw new ArgumentException ("One of the fields is not valid for this type.", "fields");
 				else
 					throw;
 			}
+		}
+
+		public Value[] GetValues (IList<FieldInfoMirror> fields) {
+			return GetValues (fields, null);
+		}
+
+		/*
+		 * Return the value of the [ThreadStatic] field FIELD on the thread THREAD.
+		 */
+		public Value GetValue (FieldInfoMirror field, ThreadMirror thread) {
+			if (thread == null)
+				throw new ArgumentNullException ("thread");
+			CheckMirror (thread);
+			return GetValues (new FieldInfoMirror [] { field }, thread) [0];
 		}
 
 		public void SetValues (IList<FieldInfoMirror> fields, Value[] values) {
@@ -511,8 +525,18 @@ namespace Mono.Debugger.Soft
 			return GetSourceFiles (false);
 		}
 
+		string[] source_files;
+		string[] source_files_full_path;
 		public string[] GetSourceFiles (bool return_full_paths) {
-			return vm.conn.Type_GetSourceFiles (id, return_full_paths);
+			string[] res = return_full_paths ? source_files_full_path : source_files;
+			if (res == null) {
+				res = vm.conn.Type_GetSourceFiles (id, return_full_paths);
+				if (return_full_paths)
+					source_files_full_path = res;
+				else
+					source_files = res;
+			}
+			return res;
 		}
 
 		public C.TypeDefinition Metadata {
@@ -520,7 +544,7 @@ namespace Mono.Debugger.Soft
 				if (meta == null) {
 					if (Assembly.Metadata == null || MetadataToken == 0)
 						return null;
-					meta = (C.TypeDefinition)Assembly.Metadata.MainModule.LookupByToken (new MetadataToken (MetadataToken));
+					meta = (C.TypeDefinition)Assembly.Metadata.MainModule.LookupToken (MetadataToken);
 				}
 				return meta;
 			}

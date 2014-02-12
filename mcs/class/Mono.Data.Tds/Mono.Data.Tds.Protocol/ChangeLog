@@ -1,3 +1,19 @@
+2011-11-08  Neale Ferguson  <neale@sinenomine.net>
+
+	Fixes bug 1916 - incorrect appending of string to buffer when
+	remaining buffer size is less than string size.
+
+2011-05-05  Veerapuram Varadhan  <v.varadhan@gmail.com>
+
+	** Fixes #681916
+	* Tds70.cs (WriteParameterInfo): Handle null value for Image 
+	or varbinary(max) parameters as well. 
+	
+2010-09-29  Veerapuram Varadhan  <vvaradhan@novell.com>
+
+	** Fixes failed test for smallmoney
+	* Tds70.cs (WriteParameterInfo): Round money values to 4 decimals, for smallmoney too.
+	
 2010-07-13  Veerapuram Varadhan  <vvaradhan@novell.com>
 
 	** Fixes #613845
@@ -21,23 +37,28 @@
 	
 2010-07-07  Veerapuram Varadhan  <vvaradhan@novell.com>
 
-	** Fixes #609109 - DateTime part
-	* TdsComm.cs (Append[DateTime]): More fix for handling SqlServer 
-	MinValue for DateTime.
+	* TdsComm.cs (Append[DateTime]): Ugh.. ugh.. final fix for handling MinValue for DateTime.
+	
+2010-07-07  Veerapuram Varadhan  <vvaradhan@novell.com>
 
+	** Fixes #609109 - DateTime part
+	* TdsComm.cs (Append[DateTime]): More fix for handling SqlServer MinValue for DateTime.
+	
 2010-07-06  Veerapuram Varadhan  <vvaradhan@novell.com>
 
 	** Fixes #609109
-	* TdsComm.cs (Append[DateTime]): Handle datetime values sanely
-	that are less than epoch.
-	(Append[string]): Fix boundary checking for availability of
-	enough buffer
-
+	* TdsComm.cs (Append[DateTime]): Handle datetime values sanely that are less than epoch.
+	(Append[string]): Fix boundary checking for availability of enough buffer
+	
 2010-07-03  Veerapuram Varadhan  <vvaradhan@novell.com>
 
 	** Fixes #609935
 	* TdsComm.cs (Append[string]): Fix boundary calculations of bytes 
 	to be written and available free buffer.
+	
+2010-06-15 Jonathan Chambers  <joncham@gmail.com>
+
+	* Tds.cs: Add {} around default switch case.
 
 2010-06-15  Veerapuram Varadhan  <vvaradhan@novell.com>
 

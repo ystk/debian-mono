@@ -1,5 +1,5 @@
-prefix=@prefix@
-exec_prefix=${prefix}
+prefix=${pcfiledir}/../..
+exec_prefix=${pcfiledir}/../..
 libdir=${prefix}/@reloc_libdir@
 includedir=${prefix}/include
 
