@@ -31,7 +31,7 @@ using XPI = System.Xml.Linq.XProcessingInstruction;
 
 namespace System.Xml.Linq
 {
-	internal class XNodeReader : XmlReader
+	internal class XNodeReader : XmlReader, IXmlLineInfo
 	{
 		ReadState state = ReadState.Initial;
 		XNode node, start;
@@ -46,6 +46,24 @@ namespace System.Xml.Linq
 			start = node;
 		}
 
+		int IXmlLineInfo.LineNumber {
+			get {
+				var o = (XObject) GetCurrentAttribute () ?? node;
+				return o != null ? o.LineNumber : 0;
+			}
+		}
+		int IXmlLineInfo.LinePosition {
+			get {
+				var o = (XObject) GetCurrentAttribute () ?? node;
+				return o != null ? o.LinePosition : 0;
+			}
+		}
+		bool IXmlLineInfo.HasLineInfo ()
+		{
+				var o = (XObject) GetCurrentAttribute () ?? node;
+				return o != null ? ((IXmlLineInfo) o).HasLineInfo () : false;
+		}
+	
 		public override int AttributeCount {
 			get {
 				if (state != ReadState.Interactive || end_element)
@@ -130,7 +148,7 @@ namespace System.Xml.Linq
 			get { return !EOF && attr < 0 && node is XElement ? ((XElement) node).IsEmpty : false; }
 		}
 
-		XAttribute GetCurrentAttribute ()
+		internal XAttribute GetCurrentAttribute ()
 		{
 			return GetXAttribute (attr);
 		}
@@ -514,6 +532,11 @@ namespace System.Xml.Linq
 		public override void ResolveEntity ()
 		{
 			throw new NotSupportedException ();
+		}
+		
+		// Note that this does not return attribute node.
+		internal XNode CurrentNode {
+			get { return node; }
 		}
 	}
 }

@@ -1,24 +1,23 @@
-2010-03-26  Veerapuram Varadhan  <vvaradhan@novell.com>
+2011-05-05  Veerapuram Varadhan  <v.varadhan@gmail.com>
 
-	** Patch by Daniel Morgan <monodanmorg@yahoo.com>
-	* System.Data.OracleClient/OracleParameter.cs: clean up 
+	* OracleConnection.cs (GetOracleVersion, GetNlsInfo): 
+	* OracleParameter.cs: Use UIntPtr for referencing size_t 
+	parameters to fix 32/64 bit - big/little-endian issues 
+	while calling native methods.
 	
-2010-03-24  Veerapuram Varadhan  <vvaradhan@novell.com>
+2010-02-14  Veerapuram Varadhan  <vvaradhan@novell.com>
 
-	** Fixes #565149 - by Daniel Morgan  <monodanmorg@yahoo.com>
-	* System.Data.OracleClient/OracleParameter.cs:
-	- if programmer explicitly sets the Size property, 
-	do not override the size later if the Value property 
-	is set for character data. 
-	- for character and numeric data types, output and 
-	return parameters were not allocated memory.  
-	Also, input/output parameters need to allocate memory 
-	based on Size because the output can be bigger than 
-	the input after an execute.
+	** Fixes 667855
+	* OracleParameter.cs (InferSize): For Raw types, use the appropriate 
+	methods to convert value to bytearray and use them to bind.
+	(Bind): Fix index parameters in call to Array.ConstrainedCopy. 
+	
+2010-01-30  Veerapuram Varadhan  <vvaradhan@novell.com>
 
-	* Test/TestOracleClient.cs: Data Adapter Test 2 is failing 
-	for NET_2_0 profile.
-        
+	** Fixes #667236 - Based on patch by Kalyanov.Dmitry@gmail.com
+	* OracleParameter.cs (GetOutValue): Handle OciDataType.Integer 
+	appropriately using the underlying dbType.
+	
 2009-10-29  Veerapuram Varadhan  <vvaradhan@novell.com>
 
 	** Fixes #322695

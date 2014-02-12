@@ -10,6 +10,9 @@ namespace Mono.Debugger.Soft
 		internal ThreadMirror (VirtualMachine vm, long id) : base (vm, id) {
 		}
 
+		internal ThreadMirror (VirtualMachine vm, long id, TypeMirror type, AppDomainMirror domain) : base (vm, id, type, domain) {
+		}
+
 		// FIXME: Cache, invalidate when the thread/runtime is resumed
 		public StackFrame[] GetFrames () {
 			FrameInfo[] frame_info = vm.conn.Thread_GetFrameInfo (id, 0, -1);
@@ -52,13 +55,26 @@ namespace Mono.Debugger.Soft
 			}
 		}
 
+		long? thread_id;
 		/*
 		 * Return a unique identifier for this thread, multiple ThreadMirror objects
 		 * may have the same ThreadId because of appdomains.
 		 */
 		public long ThreadId {
 			get {
-				return vm.conn.Thread_GetId (id);
+				if (thread_id == null)
+				 	thread_id = vm.conn.Thread_GetId (id);
+				return (long)thread_id;
+			}
+		}
+
+		/*
+		 * Return the system thread id (TID) for this thread, this id is not unique since
+		 * a newly started thread might reuse a dead thread's id.
+		 */
+		public long TID {
+			get {
+				return vm.conn.Thread_GetTID (id);
 			}
 		}
     }

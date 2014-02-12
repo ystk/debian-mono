@@ -27,6 +27,7 @@
 //
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Net.Security;
 using System.Runtime.Serialization;
 using System.Reflection;
@@ -35,6 +36,7 @@ using System.Xml.Serialization;
 
 namespace System.ServiceModel.Description
 {
+	[DebuggerDisplay ("Name={name}, Namespace={ns}, Type={Type}, Index={index}}")]
 	public class MessagePartDescription
 	{
 		int index;
@@ -50,8 +52,8 @@ namespace System.ServiceModel.Description
 		
 		public MessagePartDescription (string name, string ns)
 		{
-			this.name = name;
 			this.ns = ns;
+			this.Name = name;
 		}
 
 		public int Index {
@@ -66,6 +68,10 @@ namespace System.ServiceModel.Description
 
 		public string Name {
 			get { return name; }
+			internal set {
+				name = value;
+				XmlName = new XmlName (value);
+			}
 		}
 
 		public string Namespace {
@@ -94,15 +100,27 @@ namespace System.ServiceModel.Description
 			set { type = value; }
 		}
 
-		internal XmlQualifiedName TypeName {
-			get { return xml_schema_type_name; }
-			set { xml_schema_type_name = value; }
+#if !NET_2_1
+		internal XsdDataContractImporter DataContractImporter { get; set; }
+		internal XmlSerializerMessageContractImporterInternal XmlSerializationImporter { get; set; }
+		internal System.CodeDom.CodeTypeReference CodeTypeReference { get; set; }
+#endif
+
+		#region internals required for moonlight compatibility
+
+		internal XmlName XmlName {
+			get; private set;
 		}
 
-		internal XmlTypeMapping XmlTypeMapping {
-			get { return xml_type_mapping; }
-			set { xml_type_mapping = value; }
+		ICustomAttributeProvider additional_att_provider;
+
+		internal ICustomAttributeProvider AdditionalAttributesProvider {
+			get { return additional_att_provider ?? MemberInfo; }
+			set { additional_att_provider = value; }
 		}
 
+		internal int SerializationPosition { get; set; }
+
+		#endregion
 	}
 }

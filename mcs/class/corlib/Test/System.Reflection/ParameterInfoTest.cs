@@ -73,7 +73,7 @@ namespace MonoTests.System.Reflection
 			}
 		}
 
-#if NET_2_0
+#if NET_2_0 && !NET_2_1
 		public enum ParamEnum {
 			None = 0,
 			Foo = 1,
@@ -201,6 +201,18 @@ namespace MonoTests.System.Reflection
 			ParameterInfo parm = typeof (Derived).GetMethod ("SomeMethod").GetParameters()[0];
 			Assert.AreEqual (typeof (Derived), parm.Member.ReflectedType);
 			Assert.AreEqual (typeof (Base), parm.Member.DeclaringType);
+		}
+
+		[Test]
+		public void ArrayMethodParameters ()
+		{
+			var matrix_int_get = typeof (int[,,]).GetMethod ("Get");
+			var parameters = matrix_int_get.GetParameters ();
+
+			Assert.AreEqual (3, parameters.Length);
+			Assert.AreEqual (0, parameters [0].GetCustomAttributes (false).Length);
+			Assert.AreEqual (0, parameters [1].GetCustomAttributes (false).Length);
+			Assert.AreEqual (0, parameters [2].GetCustomAttributes (false).Length);
 		}
 
 		class Base

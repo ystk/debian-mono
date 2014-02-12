@@ -39,9 +39,7 @@ namespace Mono.Security.Protocol.Tls
 		
 		#region Fields
 
-		static ManualResetEvent record_processing = new ManualResetEvent (true);
-
-		private const int WaitTimeOut = 5 * 60 * 1000;
+		static ManualResetEvent record_processing = new ManualResetEvent (true);	
 
 		internal Stream innerStream;
 		internal MemoryStream inputBuffer;
@@ -185,10 +183,8 @@ namespace Mono.Security.Protocol.Tls
 															X509CertificateCollection serverRequestedCertificates);
 
 		internal abstract bool OnRemoteCertificateValidation(X509Certificate certificate, int[] errors);
-#if NET_2_0
 		internal abstract ValidationResult OnRemoteCertificateValidation2 (Mono.Security.X509.X509CertificateCollection collection);
 		internal abstract bool HaveRemoteValidation2Callback { get; }
-#endif
 
 		internal abstract AsymmetricAlgorithm OnLocalPrivateKeySelection(X509Certificate certificate, string targetHost);
 
@@ -209,12 +205,10 @@ namespace Mono.Security.Protocol.Tls
 			return OnRemoteCertificateValidation(certificate, errors);
 		}
 
-#if NET_2_0
 		internal ValidationResult RaiseRemoteCertificateValidation2 (Mono.Security.X509.X509CertificateCollection collection)
 		{
 			return OnRemoteCertificateValidation2 (collection);
 		}
-#endif
 
 		internal AsymmetricAlgorithm RaiseLocalPrivateKeySelection(
 			X509Certificate certificate,
@@ -879,7 +873,7 @@ namespace Mono.Security.Protocol.Tls
 			// Always wait until the read is complete
 			if (!asyncResult.IsCompleted)
 			{
-				if (!asyncResult.AsyncWaitHandle.WaitOne (WaitTimeOut, false))
+				if (!asyncResult.AsyncWaitHandle.WaitOne ())
 					throw new TlsException (AlertDescription.InternalError, "Couldn't complete EndRead");
 			}
 
@@ -904,7 +898,7 @@ namespace Mono.Security.Protocol.Tls
 
 			if (!asyncResult.IsCompleted)
 			{
-				if (!internalResult.AsyncWaitHandle.WaitOne (WaitTimeOut, false))
+				if (!internalResult.AsyncWaitHandle.WaitOne ())
 					throw new TlsException (AlertDescription.InternalError, "Couldn't complete EndWrite");
 			}
 
@@ -916,11 +910,7 @@ namespace Mono.Security.Protocol.Tls
 
 		public override void Close()
 		{
-#if NET_2_0
 			base.Close ();
-#else
-			((IDisposable)this).Dispose();
-#endif
 		}
 
 		public override void Flush()
@@ -1179,17 +1169,7 @@ namespace Mono.Security.Protocol.Tls
 			this.Dispose(false);
 		}
 
-#if !NET_2_0
-		public void Dispose()
-		{
-			this.Dispose(true);
-			GC.SuppressFinalize(this);
-		}
-
-		protected virtual void Dispose (bool disposing)
-#else
 		protected override void Dispose (bool disposing)
-#endif
 		{
 			if (!this.disposed)
 			{
@@ -1218,9 +1198,7 @@ namespace Mono.Security.Protocol.Tls
 				}
 
 				this.disposed = true;
-#if NET_2_0
 				base.Dispose (disposing);
-#endif
 			}
 		}
 

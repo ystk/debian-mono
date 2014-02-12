@@ -126,6 +126,18 @@ ves_icall_System_IO_MonoIO_GetFileSystemEntries (MonoString *path,
 						 gint32 *error) MONO_INTERNAL;
 
 extern MonoString *
+ves_icall_System_IO_MonoIO_FindFirst (MonoString *path,
+				      MonoString *path_with_pattern,
+				      gint32 *result_mask,
+				      gint32 *error,
+				      gpointer *handle) MONO_INTERNAL;
+extern MonoString *
+ves_icall_System_IO_MonoIO_FindNext (gpointer handle, gint32 *result_mask, gint32 *error) MONO_INTERNAL;
+
+extern int
+ves_icall_System_IO_MonoIO_FindClose (gpointer handle) MONO_INTERNAL;
+
+extern MonoString *
 ves_icall_System_IO_MonoIO_GetCurrentDirectory (gint32 *error) MONO_INTERNAL;
 
 extern MonoBoolean
@@ -238,6 +250,12 @@ extern MonoBoolean
 ves_icall_System_IO_MonoIO_ReplaceFile (MonoString *sourceFileName, MonoString *destinationFileName,
 					MonoString *destinationBackupFileName, MonoBoolean ignoreMetadataErrors,
 					gint32 *error) MONO_INTERNAL;
+
+extern gint64
+mono_filesize_from_path (MonoString *path);
+
+extern gint64
+mono_filesize_from_fd (int fd);
 
 G_END_DECLS
 

@@ -3,7 +3,7 @@
 //
 // Authors:
 //	Sureshkumar T (tsureshkumar@novell.com)
-//	Marek Safar (marek.safar@seznam.cz) (stubs)
+//	Marek Safar (marek.safar@gmail.com)
 //	Ankit Jain (radical@corewars.org)
 //	David Waite (mass@akuma.org)
 //	Juraj Skripsky (js@hotfeet.ch)
@@ -33,7 +33,6 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if NET_2_0
 
 using System;
 using System.Collections;
@@ -41,6 +40,7 @@ using System.Collections.Generic;
 using System.Runtime.Serialization;
 using System.Security.Permissions;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 
 namespace System.Collections.Generic {
 
@@ -55,6 +55,8 @@ namespace System.Collections.Generic {
 
 	[ComVisible(false)]
 	[Serializable]
+	[DebuggerDisplay ("Count={Count}")]
+	[DebuggerTypeProxy (typeof (CollectionDebuggerView<,>))]
 	public class Dictionary<TKey, TValue> : IDictionary<TKey, TValue>,
 		IDictionary,
 		ICollection,
@@ -299,16 +301,24 @@ namespace System.Collections.Generic {
 				throw new ArgumentException ("Destination array cannot hold the requested elements!");
 		}
 
-		delegate TRet Transform<TRet> (TKey key, TValue value);
-
-		void Do_CopyTo<TRet, TElem> (TElem [] array, int index, Transform<TRet> transform)
-			where TRet : TElem
+		void CopyKeys (TKey[] array, int index)
 		{
 			for (int i = 0; i < touchedSlots; i++) {
 				if ((linkSlots [i].HashCode & HASH_FLAG) != 0)
-					array [index++] = transform (keySlots [i], valueSlots [i]);
+					array [index++] = keySlots [i];
 			}
 		}
+
+		void CopyValues (TValue[] array, int index)
+		{
+			for (int i = 0; i < touchedSlots; i++) {
+				if ((linkSlots [i].HashCode & HASH_FLAG) != 0)
+					array [index++] = valueSlots [i];
+			}
+		}
+
+		delegate TRet Transform<TRet> (TKey key, TValue value);
+
 
 		static KeyValuePair<TKey, TValue> make_pair (TKey key, TValue value)
 		{
@@ -328,7 +338,10 @@ namespace System.Collections.Generic {
 		void CopyTo (KeyValuePair<TKey, TValue> [] array, int index)
 		{
 			CopyToCheck (array, index);
-			Do_CopyTo<KeyValuePair<TKey, TValue>, KeyValuePair<TKey, TValue>> (array, index, make_pair);
+			for (int i = 0; i < touchedSlots; i++) {
+				if ((linkSlots [i].HashCode & HASH_FLAG) != 0)
+					array [index++] = new KeyValuePair<TKey, TValue> (keySlots [i], valueSlots [i]);
+			}
 		}
 
 		void Do_ICollectionCopyTo<TRet> (Array array, int index, Transform<TRet> transform)
@@ -340,7 +353,17 @@ namespace System.Collections.Generic {
 				if ((src.IsPrimitive || tgt.IsPrimitive) && !tgt.IsAssignableFrom (src))
 					throw new Exception (); // we don't care.  it'll get transformed to an ArgumentException below
 
-				Do_CopyTo ((object []) array, index, transform);
+#if BOOTSTRAP_BASIC
+				// BOOTSTRAP: gmcs 2.4.x seems to have trouble compiling the alternative
+				throw new Exception ();
+#else
+				object[] dest = (object[])array;
+				for (int i = 0; i < touchedSlots; i++) {
+					if ((linkSlots [i].HashCode & HASH_FLAG) != 0)
+						dest [index++] = transform (keySlots [i], valueSlots [i]);
+				}
+#endif
+
 			} catch (Exception e) {
 				throw new ArgumentException ("Cannot copy source collection elements to destination array", "array", e);
 			}
@@ -493,11 +516,13 @@ namespace System.Collections.Generic {
 
 			info.AddValue ("Version", generation);
 			info.AddValue ("Comparer", hcp);
-			KeyValuePair<TKey, TValue> [] data = null;
-			if (count > 0) {
-				data = new KeyValuePair<TKey,TValue> [count];
+			// MS.NET expects either *no* KeyValuePairs field (when count = 0)
+			// or a non-null KeyValuePairs field. We don't omit the field to
+			// remain compatible with older monos, but we also doesn't serialize
+			// it as null to make MS.NET happy.
+			KeyValuePair<TKey, TValue> [] data = new KeyValuePair<TKey,TValue> [count];
+			if (count > 0)
 				CopyTo (data, 0);
-			}
 			info.AddValue ("HashSize", table.Length);
 			info.AddValue ("KeyValuePairs", data);
 		}
@@ -507,14 +532,34 @@ namespace System.Collections.Generic {
 			if (serialization_info == null)
 				return;
 
-			generation = serialization_info.GetInt32 ("Version");
-			hcp = (IEqualityComparer<TKey>) serialization_info.GetValue ("Comparer", typeof (IEqualityComparer<TKey>));
+			int hashSize = 0;
+			KeyValuePair<TKey, TValue> [] data = null;
 
-			int hashSize = serialization_info.GetInt32 ("HashSize");
-			KeyValuePair<TKey, TValue> [] data =
-				(KeyValuePair<TKey, TValue> [])
-				serialization_info.GetValue ("KeyValuePairs", typeof (KeyValuePair<TKey, TValue> []));
+			// We must use the enumerator because MS.NET doesn't
+			// serialize "KeyValuePairs" for count = 0.
+			SerializationInfoEnumerator e = serialization_info.GetEnumerator ();
+			while (e.MoveNext ()) {
+				switch (e.Name) {
+				case "Version":
+					generation = (int) e.Value;
+					break;
 
+				case "Comparer":
+					hcp = (IEqualityComparer<TKey>) e.Value;
+					break;
+
+				case "HashSize":
+					hashSize = (int) e.Value;
+					break;
+
+				case "KeyValuePairs":
+					data = (KeyValuePair<TKey, TValue> []) e.Value;
+					break;
+				}
+			}
+
+			if (hcp == null)
+				hcp = EqualityComparer<TKey>.Default;
 			if (hashSize < INITIAL_SIZE)
 				hashSize = INITIAL_SIZE;
 			InitArrays (hashSize);
@@ -740,7 +785,10 @@ namespace System.Collections.Generic {
 			CopyToCheck (array, index);
 			DictionaryEntry [] entries = array as DictionaryEntry [];
 			if (entries != null) {
-				Do_CopyTo (entries, index, delegate (TKey key, TValue value) { return new DictionaryEntry (key, value); });
+				for (int i = 0; i < touchedSlots; i++) {
+					if ((linkSlots [i].HashCode & HASH_FLAG) != 0)
+						entries [index++] = new DictionaryEntry (keySlots [i], valueSlots [i]);
+				}
 				return;
 			}
 
@@ -924,6 +972,8 @@ namespace System.Collections.Generic {
 
 		// This collection is a read only collection
 		[Serializable]
+		[DebuggerDisplay ("Count={Count}")]
+		[DebuggerTypeProxy (typeof (CollectionDebuggerView<,>))]		
 		public sealed class KeyCollection : ICollection<TKey>, IEnumerable<TKey>, ICollection, IEnumerable {
 			Dictionary<TKey, TValue> dictionary;
 
@@ -938,7 +988,7 @@ namespace System.Collections.Generic {
 			public void CopyTo (TKey [] array, int index)
 			{
 				dictionary.CopyToCheck (array, index);
-				dictionary.Do_CopyTo<TKey, TKey> (array, index, pick_key);
+				dictionary.CopyKeys (array, index);
 			}
 
 			public Enumerator GetEnumerator ()
@@ -1040,6 +1090,8 @@ namespace System.Collections.Generic {
 
 		// This collection is a read only collection
 		[Serializable]
+		[DebuggerDisplay ("Count={Count}")]
+		[DebuggerTypeProxy (typeof (CollectionDebuggerView<,>))]		
 		public sealed class ValueCollection : ICollection<TValue>, IEnumerable<TValue>, ICollection, IEnumerable {
 			Dictionary<TKey, TValue> dictionary;
 
@@ -1053,7 +1105,7 @@ namespace System.Collections.Generic {
 			public void CopyTo (TValue [] array, int index)
 			{
 				dictionary.CopyToCheck (array, index);
-				dictionary.Do_CopyTo<TValue, TValue> (array, index, pick_value);
+				dictionary.CopyValues (array, index);
 			}
 
 			public Enumerator GetEnumerator ()
@@ -1154,4 +1206,3 @@ namespace System.Collections.Generic {
 		}
 	}
 }
-#endif

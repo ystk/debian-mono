@@ -31,15 +31,17 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if NET_2_0
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 
 namespace System.Collections.ObjectModel
 {
 	[ComVisible(false)]
 	[Serializable]
+	[DebuggerDisplay ("Count={Count}")]
+	[DebuggerTypeProxy (typeof (CollectionDebuggerView<,>))]	
 	public abstract class KeyedCollection<TKey, TItem> : Collection<TItem>
 	{
 		private Dictionary<TKey, TItem> dictionary;
@@ -213,4 +215,3 @@ namespace System.Collections.ObjectModel
 		}
 	}
 }
-#endif

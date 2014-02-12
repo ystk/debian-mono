@@ -27,7 +27,7 @@
 // OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
-#if NET_2_0
+
 using System;
 using System.CodeDom;
 using System.CodeDom.Compiler;
@@ -146,13 +146,15 @@ namespace System.Web.Compilation
 			if (NeedsLoadFromBin && _compiler != null)
 				return LoadTypeFromBin (_compiler, Parser);
 			
-			// This is not called if compilation failed.
-			// Returning null makes the caller throw an InvalidCastException
+			Type type = null;
 			Assembly assembly = results != null ? results.CompiledAssembly : null;
-			if (assembly == null)
-				return null;
-			
-			return assembly.GetType (GetClassType (_compiler, Parser));
+			if (assembly != null) {
+				type = assembly.GetType (GetClassType (_compiler, Parser));
+			}
+			if (type == null) {
+				throw new HttpException (500, String.Format ("Type {0} could not be loaded", GetClassType (_compiler, Parser)));
+			}
+			return type;
 		}
 
 		// This is intended to be used by builders which may need to do special processing
@@ -232,4 +234,3 @@ namespace System.Web.Compilation
 		}
 	}
 }
-#endif

@@ -1,3 +1,7 @@
+/* 
+ * Copyright 2004-2011 Novell, Inc (http://www.novell.com)
+ * Copyright 2011 Xamarin, Inc (http://www.xamarin.com)
+ */
 #ifndef __MONO_OS_GC_WRAPPER_H__
 #define __MONO_OS_GC_WRAPPER_H__
 
@@ -47,15 +51,27 @@
 #		error have boehm GC without headers, you probably need to install them by hand
 #	endif
 
-#if defined(PLATFORM_WIN32)
+#if defined(HOST_WIN32)
 #define CreateThread GC_CreateThread
 #endif
 
 #elif defined(HAVE_SGEN_GC)
 
-#if defined(PLATFORM_WIN32)
+#if defined(HOST_WIN32)
 #define CreateThread mono_gc_CreateThread
-#else
+
+#endif
+
+#else /* not Boehm and not sgen GC */
+#endif
+
+#if !defined(HOST_WIN32)
+
+/*
+ * Both Boehm and SGEN needs to intercept some thread operations. So instead of the
+ * pthread_... calls, runtime code should call these wrappers.
+ */
+
 /* pthread function wrappers */
 #include <pthread.h>
 #include <signal.h>
@@ -64,13 +80,6 @@ int mono_gc_pthread_create (pthread_t *new_thread, const pthread_attr_t *attr, v
 int mono_gc_pthread_join (pthread_t thread, void **retval);
 int mono_gc_pthread_detach (pthread_t thread);
 
-#define pthread_create mono_gc_pthread_create
-#define pthread_join mono_gc_pthread_join
-#define pthread_detach mono_gc_pthread_detach
-
-#endif
-
-#else /* not Boehm and not sgen GC */
 #endif
 
 #endif

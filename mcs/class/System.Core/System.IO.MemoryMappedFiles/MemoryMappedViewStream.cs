@@ -26,7 +26,7 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if NET_4_0
+#if NET_4_0 || MOBILE
 
 using System;
 using System.IO;
@@ -34,29 +34,22 @@ using System.IO;
 namespace System.IO.MemoryMappedFiles
 {
 	public sealed class MemoryMappedViewStream : UnmanagedMemoryStream {
-
 		IntPtr mmap_addr;
 		ulong mmap_size;
 		object monitor;
-
-		internal MemoryMappedViewStream (FileStream file, long offset, long size, MemoryMappedFileAccess access) {
+		int fd;
+		
+		internal MemoryMappedViewStream (int fd, long offset, long size, MemoryMappedFileAccess access) {
+			this.fd = fd;
 			monitor = new Object ();
-			if (Environment.OSVersion.Platform < PlatformID.Unix)
-				throw new NotImplementedException ("Not implemented on windows.");
-			else
-				CreateStreamPosix (file, offset, size, access);
+			CreateStream (fd, offset, size, access);
 		}
 
-		unsafe void CreateStreamPosix (FileStream file, long offset, long size, MemoryMappedFileAccess access) {
-			long fsize = file.Length;
-
-			if (size == 0 || size > fsize)
-				size = fsize;
-
+		unsafe void CreateStream (int fd, long offset, long size, MemoryMappedFileAccess access)
+		{
 			int offset_diff;
-
-			MemoryMappedFile.MapPosix (file, offset, size, access, out mmap_addr, out offset_diff, out mmap_size);
-			
+			mmap_size = (ulong) size;
+			MemoryMapImpl.Map (fd, offset, ref size, access, out mmap_addr, out offset_diff);
 			FileAccess faccess;
 
 			switch (access) {
@@ -80,12 +73,16 @@ namespace System.IO.MemoryMappedFiles
 			base.Dispose (disposing);
 			lock (monitor) {
 				if (mmap_addr != (IntPtr)(-1)) {
-					MemoryMappedFile.UnmapPosix (mmap_addr, mmap_size);
+					MemoryMapImpl.Unmap (mmap_addr, mmap_size);
 					mmap_addr = (IntPtr)(-1);
 				}
 			}
 		}
 
+		public override void Flush ()
+		{
+			MemoryMapImpl.Flush (fd);
+		}
 	}
 }
 

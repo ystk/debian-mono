@@ -35,15 +35,14 @@
 
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
+using System.Security;
 using System.Security.Permissions;
 
 namespace System.IO {
 	
 	[Serializable]
 	[FileIOPermission (SecurityAction.InheritanceDemand, Unrestricted = true)]
-#if NET_2_0
 	[ComVisible (true)]
-#endif
 #if NET_2_1
 	public abstract class FileSystemInfo {
 #else
@@ -103,6 +102,8 @@ namespace System.IO {
 			}
 
 			set {
+				SecurityManager.EnsureElevatedPermissions (); // this is a no-op outside moonlight
+
 				long filetime = value.ToFileTime ();
 			
 				MonoIOError error;
@@ -133,6 +134,8 @@ namespace System.IO {
 			}
 
 			set {
+				SecurityManager.EnsureElevatedPermissions (); // this is a no-op outside moonlight
+
 				long filetime = value.ToFileTime ();
 
 				MonoIOError error;
@@ -165,6 +168,8 @@ namespace System.IO {
 			}
 
 			set {
+				SecurityManager.EnsureElevatedPermissions (); // this is a no-op outside moonlight
+
 				long filetime = value.ToFileTime ();
 
 				MonoIOError error;
@@ -251,6 +256,11 @@ namespace System.IO {
 				throw new ArgumentException ("An empty file name is not valid.");
 			if (path.IndexOfAny (Path.InvalidPathChars) != -1)
 				throw new ArgumentException ("Illegal characters in path.");
+			if (Environment.IsRunningOnWindows) {
+				int idx = path.IndexOf (':');
+				if (idx >= 0 && idx != 1)
+					throw new ArgumentException ("path");
+			}
 		}
 
 		internal MonoIOStat stat;

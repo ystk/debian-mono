@@ -856,11 +856,10 @@ namespace System.Diagnostics {
 		public static Process[] GetProcesses()
 		{
 			int [] pids = GetProcesses_internal ();
-			ArrayList proclist = new ArrayList ();
-
 			if (pids == null)
 				return new Process [0];
-			
+
+			ArrayList proclist = new ArrayList (pids.Length);
 			for (int i = 0; i < pids.Length; i++) {
 				try {
 					proclist.Add (GetProcessById (pids [i]));
@@ -893,7 +892,7 @@ namespace System.Diagnostics {
 			if (pids == null)
 				return new Process [0];
 			
-			ArrayList proclist = new ArrayList ();
+			ArrayList proclist = new ArrayList (pids.Length);
 			for (int i = 0; i < pids.Length; i++) {
 				try {
 					Process p = GetProcessById (pids [i]);
@@ -1601,13 +1600,11 @@ namespace System.Diagnostics {
 				if(disposing) {
 					// Do stuff here
 					lock (this) {
-#if NET_2_0
 						/* These have open FileStreams on the pipes we are about to close */
 						if (async_output != null)
 							async_output.Close ();
 						if (async_error != null)
 							async_error.Close ();
-#endif
 					}
 				}
 				

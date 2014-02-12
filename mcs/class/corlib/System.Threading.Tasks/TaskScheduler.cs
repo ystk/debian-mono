@@ -1,4 +1,3 @@
-#if NET_4_0
 // 
 // TaskScheduler.cs
 //  
@@ -25,15 +24,18 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+#if NET_4_0 || MOBILE
 using System;
 using System.Threading;
 using System.Collections.Generic;
 
 namespace System.Threading.Tasks
 {
+	[System.Diagnostics.DebuggerDisplay ("Id={Id}")]
+	[System.Diagnostics.DebuggerTypeProxy ("System.Threading.Tasks.TaskScheduler+SystemThreadingTasks_TaskSchedulerDebugView")]
 	public abstract class TaskScheduler
 	{
-		static TaskScheduler defaultScheduler = new Scheduler ();
+		static TaskScheduler defaultScheduler = new TpScheduler ();
 		
 		[ThreadStatic]
 		static TaskScheduler currentScheduler;
@@ -41,15 +43,17 @@ namespace System.Threading.Tasks
 		int id;
 		static int lastId = int.MinValue;
 		
+		public static event EventHandler<UnobservedTaskExceptionEventArgs> UnobservedTaskException;
+		
 		protected TaskScheduler ()
 		{
 			this.id = Interlocked.Increment (ref lastId);
 		}
-
-	  // FIXME: Probably not correct
+		
 		public static TaskScheduler FromCurrentSynchronizationContext ()
 		{
-			return Current;
+			var syncCtx = SynchronizationContext.Current;
+			return new SynchronizationContextScheduler (syncCtx);
 		}
 		
 		public static TaskScheduler Default  {
@@ -60,7 +64,7 @@ namespace System.Threading.Tasks
 		
 		public static TaskScheduler Current  {
 			get {
-				if (Task.Current != null && currentScheduler != null)
+				if (currentScheduler != null)
 					return currentScheduler;
 				
 				return defaultScheduler;
@@ -81,7 +85,7 @@ namespace System.Threading.Tasks
 				return Environment.ProcessorCount;
 			}
 		}
-		
+
 		protected abstract IEnumerable<Task> GetScheduledTasks ();
 		protected internal abstract void QueueTask (Task task);
 		protected internal virtual bool TryDequeue (Task task)
@@ -91,10 +95,41 @@ namespace System.Threading.Tasks
 
 		internal protected bool TryExecuteTask (Task task)
 		{
-			throw new NotSupportedException ();
+			if (task.IsCompleted)
+				return false;
+
+			if (task.Status == TaskStatus.WaitingToRun) {
+				task.Execute ();
+				return true;
+			}
+
+			return false;
 		}
 
 		protected abstract bool TryExecuteTaskInline (Task task, bool taskWasPreviouslyQueued);
+
+		internal bool RunInline (Task task)
+		{
+			if (!TryExecuteTaskInline (task, false))
+				return false;
+
+			if (!task.IsCompleted)
+				throw new InvalidOperationException ("The TryExecuteTaskInline call to the underlying scheduler succeeded, but the task body was not invoked");
+			return true;
+		}
+
+		internal static UnobservedTaskExceptionEventArgs FireUnobservedEvent (Task task, AggregateException e)
+		{
+			UnobservedTaskExceptionEventArgs args = new UnobservedTaskExceptionEventArgs (e);
+			
+			EventHandler<UnobservedTaskExceptionEventArgs> temp = UnobservedTaskException;
+			if (temp == null)
+				return args;
+			
+			temp (task, args);
+			
+			return args;
+		}
 	}
 }
 #endif

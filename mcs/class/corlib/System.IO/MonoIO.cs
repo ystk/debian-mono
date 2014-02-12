@@ -41,6 +41,8 @@ using System.IO.IsolatedStorage;
 namespace System.IO
 {
 	unsafe internal sealed class MonoIO {
+		internal static int FileAlreadyExistsHResult = unchecked ((int) 0x80070000) | (int)MonoIOError.ERROR_FILE_EXISTS;
+
 		public static readonly FileAttributes
 			InvalidFileAttributes = (FileAttributes)(-1);
 
@@ -61,7 +63,7 @@ namespace System.IO
 				return new UnauthorizedAccessException ("Access to the path is denied.");
 			case MonoIOError.ERROR_FILE_EXISTS:
 				string message = "Cannot create a file that already exist.";
-				return new IOException (message, unchecked ((int) 0x80070000) | (int) error);
+				return new IOException (message, FileAlreadyExistsHResult);
 			default:
 				/* Add more mappings here if other
 				 * errors trigger the named but empty
@@ -82,7 +84,7 @@ namespace System.IO
 			// FIXME: add more exception mappings here
 			case MonoIOError.ERROR_FILE_NOT_FOUND:
 				message = String.Format ("Could not find file \"{0}\"", path);
-#if NET_2_1
+#if MOONLIGHT
 				return new IsolatedStorageException (message);
 #else
 				return new FileNotFoundException (message, path);
@@ -93,7 +95,7 @@ namespace System.IO
 				
 			case MonoIOError.ERROR_PATH_NOT_FOUND:
 				message = String.Format ("Could not find a part of the path \"{0}\"", path);
-#if NET_2_1
+#if MOONLIGHT
 				return new IsolatedStorageException (message);
 #else
 				return new DirectoryNotFoundException (message);
@@ -108,7 +110,7 @@ namespace System.IO
 				return new IOException (message, unchecked((int)0x80070000) | (int)error);
 			case MonoIOError.ERROR_INVALID_DRIVE:
 				message = String.Format ("Could not find the drive  '{0}'. The drive might not be ready or might not be mapped.", path);
-#if NET_2_0 && !NET_2_1
+#if !NET_2_1
 				return new DriveNotFoundException (message);
 #else
 				return new IOException (message, unchecked((int)0x80070000) | (int)error);
@@ -210,6 +212,18 @@ namespace System.IO
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		public extern static MonoFileType GetFileType (IntPtr handle, out MonoIOError error);
 
+		//
+		// Find file methods
+		//
+		[MethodImplAttribute (MethodImplOptions.InternalCall)]
+		public extern static string FindFirst (string path, string pattern, out FileAttributes result_attr, out MonoIOError error, out IntPtr handle);
+		
+		[MethodImplAttribute (MethodImplOptions.InternalCall)]
+		public extern static string FindNext (IntPtr handle, out FileAttributes result_attr, out MonoIOError error);
+		
+		[MethodImplAttribute (MethodImplOptions.InternalCall)]
+		public extern static int FindClose (IntPtr handle);
+		
 		public static bool Exists (string path, out MonoIOError error)
 		{
 			FileAttributes attrs = GetFileAttributes (path,

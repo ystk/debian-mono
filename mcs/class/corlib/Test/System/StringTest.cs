@@ -2297,6 +2297,7 @@ public class StringTest
 		Assert.IsTrue ("ABC".Contains ("ABC"));
 		Assert.IsTrue ("ABC".Contains ("AB"));
 		Assert.IsTrue (!"ABC".Contains ("AD"));
+		Assert.IsTrue (!"encyclop�dia".Contains("encyclopaedia"));
 	}
 
 	[Test]
@@ -2656,6 +2657,8 @@ public class StringTest
 
 		string s3 = "test123";
 		Assert.AreEqual (0, s3.LastIndexOf ("test123"), "bug #77412");
+
+		Assert.AreEqual (1, "\u267B RT \u30FC".LastIndexOf ("\u267B RT "), "bug #605094");
 	}
 
 #if NET_2_0
@@ -4225,7 +4228,6 @@ public class StringTest
 		Assert.AreEqual (2, res.Length, "#11-09-3");
 	}
 	
-#if NET_2_0
 	[Test]
 	public void SplitStringStrings ()
 	{
@@ -4330,7 +4332,6 @@ public class StringTest
 		Assert.AreEqual ("..", res[1], "#11-09-2");
 		Assert.AreEqual (2, res.Length, "#11-09-3");
 	}
-#endif
 
 	[Test]
 	[Category ("NotDotNet")]
@@ -4372,6 +4373,56 @@ public class StringTest
 		Assert.AreEqual (formKD, s.Normalize (NormalizationForm.FormKD), "#3");
 		Assert.AreEqual (formKC, s.Normalize (NormalizationForm.FormKC), "#4");
 	}
+
+	[Test] // bug #480152, test cases by David Mitchell
+	public void NormalizeFormD ()
+	{
+		Assert.AreEqual ("\u212B".Normalize (NormalizationForm.FormD), "\u0041\u030A", "#1");
+		Assert.AreEqual ("\u1E69".Normalize (NormalizationForm.FormD), "\u0073\u0323\u0307", "#2");
+		Assert.AreEqual ("\u1e4e".Normalize (NormalizationForm.FormD), "\u004f\u0303\u0308", "#3");
+		Assert.AreEqual ("\u1e2f".Normalize (NormalizationForm.FormD), "\u0069\u0308\u0301", "#4");
+	}
+
+	[Test] // bug #480152, test cases by David Mitchell
+	public void NormalizeFormC ()
+	{
+		Assert.AreEqual ("\u0041\u030a\u0061\u030a".Normalize (NormalizationForm.FormC), "\u00c5\u00e5", "#1");
+		Assert.AreEqual ("\u006E\u0303".Normalize (NormalizationForm.FormC), "\u00F1", "#2");
+		Assert.AreEqual ("\u03B7\u0313\u0300\u0345".Normalize (NormalizationForm.FormC), "\u1F92", "#3");
+	}
+
+        [Test] // bug #480152, test cases by Tom Philpot
+        public void NormalizeFormCCrashers ()
+        {
+		string[][] entries = new string[][] {
+			new string[] { "\u05d0\u0307\u05dc", "#1" },
+			new string[] { "\u05d0\u0307\u05dc\u05d9\u05d9\u05df", "#2" },
+			new string[] { "\u05d4\u05d0\u0307\u05dc\u0307\u05d9\u0307\u05df\u0307", "#3" },
+			new string[] { "\u05d9\u05e9\u05de\u05e2\u0307\u05d0\u0307\u05dc\u0307", "#4" },
+			new string[] { "\u05d9\u05e9\u05e8\u05d0\u0307\u05dc\u0307", "#5" },
+		};
+
+		foreach (string[] entry in entries)
+			entry [0].Normalize (NormalizationForm.FormC);
+	}
+
+	[Test]
+	public void NormalizeFormCHangul ()
+	{
+		Assert.AreEqual ("\u1100\u116C".Normalize (NormalizationForm.FormC), "\uAD34", "#1");
+		Assert.AreEqual ("\u1100\u116B\u11C2".Normalize (NormalizationForm.FormC), "\uAD33", "#2");
+		Assert.AreEqual ("\u1100!".Normalize (NormalizationForm.FormC), "\u1100!", "#3");
+		Assert.AreEqual ("\u1100\u116B!".Normalize (NormalizationForm.FormC), "\uAD18\u0021", "#4");
+		Assert.AreEqual ("!\u116C".Normalize (NormalizationForm.FormC), "!\u116C", "#5");
+		Assert.AreEqual ("!\u116B\u11C2".Normalize (NormalizationForm.FormC), "!\u116B\u11C2", "#6");
+	}
+
+	[Test]
+	public void MoreNormalizeFormC ()
+	{
+		Assert.AreEqual ("\u1E0A\u0323".Normalize (NormalizationForm.FormC), "\u1E0C\u0307", "#1");
+		Assert.AreEqual ("\u0044\u0323\u0307".Normalize (NormalizationForm.FormC), "\u1E0C\u0307", "#2");
+	}
 #endif
 	[Test]
 	public void Emptiness ()
@@ -4408,14 +4459,80 @@ public class StringTest
 		Assert.AreSame (String.Empty, "".ToUpper (), "ToUpper");
 		Assert.AreSame (String.Empty, "".ToLower (CultureInfo.CurrentCulture), "ToLower(CultureInfo)");
 		Assert.AreSame (String.Empty, "".ToUpper (CultureInfo.CurrentCulture), "ToUpper(CultureInfo)");
-#if NET_2_0
 		Assert.AreSame (String.Empty, "".ToLowerInvariant (), "ToLowerInvariant");
 		Assert.AreSame (String.Empty, "".ToUpperInvariant (), "ToUpperInvariant");
-#endif
+
 		Assert.AreSame (String.Empty, "".Trim (), "Trim()");
 		Assert.AreSame (String.Empty, "a".Trim ('a'), "Trim(char)");
 		Assert.AreSame (String.Empty, "a".TrimEnd ('a'), "TrimEnd(char)");
 		Assert.AreSame (String.Empty, "a".TrimStart ('a'), "TrimStart(char)");
+	}
+	
+	[Test]
+	public void LastIndexOfAndEmptiness () {
+		Assert.AreEqual (-1, "".LastIndexOf('.'), "#1");
+		Assert.AreEqual (-1, "".LastIndexOf('.', -1), "#2");
+		Assert.AreEqual (-1, "".LastIndexOf('.', -1, -1), "#3");
+		Assert.AreEqual (0, "x".LastIndexOf('x', 0), "#4");
+		Assert.AreEqual (0 , "x".LastIndexOf('x', 0, 1), "#5");
+		Assert.AreEqual (-1 , "x".LastIndexOf('z', 0, 1), "#6");
+
+		try {
+			"".LastIndexOf(null);
+			Assert.Fail ("#7");
+		} catch (ArgumentNullException) {}
+
+		Assert.AreEqual (0, "".LastIndexOf(""), "#8");
+		Assert.AreEqual (0, "".LastIndexOf("", -1), "#9");
+		Assert.AreEqual (0, "".LastIndexOf("", -1, 1), "#10");
+		Assert.AreEqual (0, "".LastIndexOf("", StringComparison.Ordinal), "#11");
+		Assert.AreEqual (0, "".LastIndexOf("", -1, StringComparison.Ordinal), "#12");
+		Assert.AreEqual (0, "".LastIndexOf("", -1, -1, StringComparison.Ordinal), "#13");
+		Assert.AreEqual (0, "x".LastIndexOf(""), "#14");
+
+		Assert.AreEqual (0, "x".LastIndexOf("x", 0), "#15");
+		Assert.AreEqual (0, "x".LastIndexOf("", 0), "#16");
+		Assert.AreEqual (0, "xxxx".LastIndexOf("", 0), "#17");
+		Assert.AreEqual (1, "xxxx".LastIndexOf("", 1), "#18");
+
+		Assert.AreEqual (1, "xy".LastIndexOf(""), "#19");
+		Assert.AreEqual (2, "xyz".LastIndexOf(""), "#20");
+		Assert.AreEqual (1, "xy".LastIndexOf(""), "#21");
+		Assert.AreEqual (1, "xy".LastIndexOf("", 2), "#22");
+		Assert.AreEqual (2, "xyz".LastIndexOf("", 2), "#23");
+		Assert.AreEqual (2, "xyz".LastIndexOf("", 2, 2), "#24");
+		Assert.AreEqual (2, "xyz".LastIndexOf("", 3, 3), "#25");
+
+		try {
+			"xy".LastIndexOf("", 29);
+			Assert.Fail ("#26");
+		}catch (ArgumentOutOfRangeException){}
+
+		Assert.AreEqual (-1, "".LastIndexOf("x"), "#27");
+		Assert.AreEqual (-1, "".LastIndexOf("x", -1), "#28");
+		Assert.AreEqual (-1, "".LastIndexOf("x", -1), "#29");
+		Assert.AreEqual (-1, "".LastIndexOf("x", StringComparison.Ordinal), "#30");
+		Assert.AreEqual (-1, "".LastIndexOf("x", -1, StringComparison.Ordinal), "#31");
+		Assert.AreEqual (-1, "".LastIndexOf("x", -1, -1, StringComparison.Ordinal), "#32");
+
+		Assert.AreEqual (1, "xx".LastIndexOf("", StringComparison.Ordinal), "#33");
+		Assert.AreEqual (1, "xx".LastIndexOf("", 2, StringComparison.Ordinal), "#34");
+		Assert.AreEqual (1, "xx".LastIndexOf("", 2, 2, StringComparison.Ordinal), "#35");
+
+		Assert.AreEqual (3, "xxxx".LastIndexOf("", StringComparison.Ordinal), "#36");
+		Assert.AreEqual (2, "xxxx".LastIndexOf("", 2, StringComparison.Ordinal), "#37");
+		Assert.AreEqual (2, "xxxx".LastIndexOf("", 2, 2, StringComparison.Ordinal), "#38");
+
+		Assert.AreEqual (3, "xxxx".LastIndexOf("", 3, StringComparison.Ordinal), "#39");
+		Assert.AreEqual (3, "xxxx".LastIndexOf("", 3, 3, StringComparison.Ordinal), "#40");
+	}
+	
+	
+	[Test]
+	public void LastIndexOfAnyAndEmptiness () {
+		Assert.AreEqual (-1, "".LastIndexOfAny(new char[] {'.', 'x'}), "#1");
+		Assert.AreEqual (-1, "".LastIndexOfAny(new char[] {'.', 'x'}, -1), "#2");
+		Assert.AreEqual (-1, "".LastIndexOfAny(new char[] {'.', 'x'}, -1, -1), "#3");
 	}
 }
 

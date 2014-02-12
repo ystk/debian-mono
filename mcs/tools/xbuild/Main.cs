@@ -34,6 +34,7 @@ using System;
 using System.Collections;
 using System.IO;
 using System.Reflection;
+using System.Text;
 using Microsoft.Build.BuildEngine;
 using Microsoft.Build.Framework;
 using Microsoft.Build.Utilities;
@@ -75,14 +76,13 @@ namespace Mono.XBuild.CommandLine {
 				show_stacktrace = (parameters.LoggerVerbosity == LoggerVerbosity.Detailed ||
 					parameters.LoggerVerbosity == LoggerVerbosity.Diagnostic);
 				
-				if (parameters.DisplayVersion)
+				if (!parameters.NoLogo)
 					ErrorUtilities.ShowVersion (false);
 				
-				//FIXME: cmd line arg to set toolsversion
 				engine  = Engine.GlobalEngine;
 				if (!String.IsNullOrEmpty (parameters.ToolsVersion)) {
 					if (engine.Toolsets [parameters.ToolsVersion] == null)
-						ErrorUtilities.ReportError (0, String.Format ("Unknown tools version : {0}", parameters.ToolsVersion));
+						ErrorUtilities.ReportError (0, new UnknownToolsVersionException (parameters.ToolsVersion).Message);
 
 					engine.DefaultToolsVersion = parameters.ToolsVersion;
 				}
@@ -97,6 +97,21 @@ namespace Mono.XBuild.CommandLine {
 					cl.Parameters = parameters.ConsoleLoggerParameters;
 					cl.Verbosity = parameters.LoggerVerbosity; 
 					engine.RegisterLogger (cl);
+				}
+
+				if (parameters.FileLoggerParameters != null) {
+					for (int i = 0; i < parameters.FileLoggerParameters.Length; i ++) {
+						string fl_params = parameters.FileLoggerParameters [i];
+						if (fl_params == null)
+							continue;
+
+						var fl = new FileLogger ();
+						if (fl_params.Length == 0 && i > 0)
+							fl.Parameters = String.Format ("LogFile=msbuild{0}.log", i);
+						else
+							fl.Parameters = fl_params;
+						engine.RegisterLogger (fl);
+					}
 				}
 				
 				foreach (LoggerInfo li in parameters.Loggers) {
@@ -125,14 +140,7 @@ namespace Mono.XBuild.CommandLine {
 					return;
 				}
 
-				project.Load (projectFile);
-				
-				string oldCurrentDirectory = Environment.CurrentDirectory;
-				string dir = Path.GetDirectoryName (projectFile);
-				if (!String.IsNullOrEmpty (dir))
-					Directory.SetCurrentDirectory (dir);
-				result = engine.BuildProject (project, parameters.Targets, null);
-				Directory.SetCurrentDirectory (oldCurrentDirectory);
+				result = engine.BuildProjectFile (projectFile, parameters.Targets, null, null, BuildSettings.None, parameters.ToolsVersion);
 			}
 			
 			catch (InvalidProjectFileException ipfe) {
@@ -146,11 +154,6 @@ namespace Mono.XBuild.CommandLine {
 			catch (CommandLineException cle) {
 				ErrorUtilities.ReportError(cle.ErrorCode, show_stacktrace ? cle.ToString() : cle.Message);
 			}
-
-			catch (Exception) {
-				throw;
-			}
-			
 			finally {
 				if (engine != null)
 					engine.UnregisterAllLoggers ();
@@ -159,7 +162,6 @@ namespace Mono.XBuild.CommandLine {
 			}
 
 		}
-
 	}
 
 	// code from mcs/report.cs
@@ -193,6 +195,7 @@ namespace Mono.XBuild.CommandLine {
 				break;
 
 			case "xterm-color":
+			case "xterm-256color":
 				xterm_colors = true;
 				break;
 			}

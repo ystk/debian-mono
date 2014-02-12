@@ -63,11 +63,8 @@ namespace System.Linq.Expressions {
 		void EmitNullableConstant (EmitContext ec, Type type, object value)
 		{
 			if (value == null) {
-				var ig = ec.ig;
-				var local = ig.DeclareLocal (type);
-				ig.Emit (OpCodes.Ldloca, local);
-				ig.Emit (OpCodes.Initobj, type);
-				ig.Emit (OpCodes.Ldloc, local);
+				var local = ec.ig.DeclareLocal (type);
+				ec.EmitNullableInitialize (local);
 			} else {
 				EmitConstant (ec, type.GetFirstGenericArgument (), value);
 				ec.EmitNullableNew (type);

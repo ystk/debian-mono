@@ -6,6 +6,7 @@
  *
  * Copyright 2001-2003 Ximian, Inc (http://www.ximian.com)
  * Copyright 2004-2009 Novell, Inc (http://www.novell.com)
+ * Copyright 2011 Xamarin, Inc (http://www.xamarin.com)
  */
 
 #include <config.h>
@@ -17,6 +18,7 @@
 #include <mono/metadata/mono-debug.h>
 #include <mono/metadata/mono-debug-debugger.h>
 #include <mono/metadata/mono-endian.h>
+#include <mono/metadata/gc-internal.h>
 #include <string.h>
 
 #define DATA_TABLE_CHUNK_SIZE		16384
@@ -72,7 +74,7 @@ struct _MonoDebugDataTable {
 
 typedef struct {
 	const gchar *method_name;
-	const gchar *cil_code;
+	const gchar *obsolete_cil_code;
 	guint32 wrapper_type;
 } MonoDebugWrapperData;
 
@@ -110,7 +112,7 @@ gint32 mono_debug_debugger_version = 5;
 gint32 _mono_debug_using_mono_debugger = 0;
 
 static gboolean mono_debug_initialized = FALSE;
-GHashTable *mono_debug_handles = NULL;
+static GHashTable *mono_debug_handles = NULL;
 
 static GHashTable *data_table_hash = NULL;
 static int next_symbol_file_id = 0;
@@ -121,6 +123,8 @@ static MonoDebugHandle     *_mono_debug_get_image      (MonoImage *image);
 static void                 mono_debug_add_assembly    (MonoAssembly *assembly,
 							gpointer user_data);
 static void                 mono_debug_add_type        (MonoClass *klass);
+
+static MonoDebugHandle     *open_symfile_from_bundle   (MonoImage *image);
 
 void _mono_debug_init_corlib (MonoDomain *domain);
 
@@ -159,10 +163,9 @@ free_header_data (gpointer key, gpointer value, gpointer user_data)
 
 	if (header->wrapper_data) {
 		g_free ((gpointer)header->wrapper_data->method_name);
-		g_free ((gpointer)header->wrapper_data->cil_code);
-		g_slist_free (header->address_list);
 		g_free (header->wrapper_data);
 	}
+	g_slist_free (header->address_list);
 }
 
 static void
@@ -229,6 +232,12 @@ mono_debug_init (MonoDebugFormat format)
 	mono_debug_initialized = TRUE;
 	mono_debug_format = format;
 
+	/*
+	 * This must be called before mono_debugger_initialize(), because the
+	 * latter registers GC roots.
+	 */
+	mono_gc_base_init ();
+
 	mono_debugger_initialize (_mono_debug_using_mono_debugger);
 
 	mono_debugger_lock ();
@@ -270,6 +279,9 @@ _mono_debug_init_corlib (MonoDomain *domain)
 void
 mono_debug_open_image_from_memory (MonoImage *image, const guint8 *raw_contents, int size)
 {
+	if (!mono_debug_initialized)
+		return;
+
 	mono_debug_open_image (image, raw_contents, size);
 }
 
@@ -292,8 +304,13 @@ mono_debug_cleanup (void)
 		data_table_hash = NULL;
 	}
 
-	g_free (mono_symbol_table);
-	mono_symbol_table = NULL;
+	if (mono_symbol_table) {
+		if (mono_symbol_table->global_data_table)
+			free_data_table (mono_symbol_table->global_data_table);
+
+		g_free (mono_symbol_table);
+		mono_symbol_table = NULL;
+	}
 }
 
 void
@@ -418,8 +435,14 @@ mono_debug_open_image (MonoImage *image, const guint8 *raw_contents, int size)
 static void
 mono_debug_add_assembly (MonoAssembly *assembly, gpointer user_data)
 {
+	MonoDebugHandle *handle;
+	MonoImage *image;
+
 	mono_debugger_lock ();
-	mono_debug_open_image (mono_assembly_get_image (assembly), NULL, 0);
+	image = mono_assembly_get_image (assembly);
+	handle = open_symfile_from_bundle (image);
+	if (!handle)
+		mono_debug_open_image (image, NULL, 0);
 	mono_debugger_unlock ();
 }
 
@@ -630,8 +653,12 @@ mono_debug_add_method (MonoMethod *method, MonoDebugMethodJitInfo *jit, MonoDoma
 	g_assert (size < max_size);
 	total_size = size + sizeof (MonoDebugMethodAddress);
 
-	address = (MonoDebugMethodAddress *) allocate_data_item (
-		table, MONO_DEBUG_DATA_ITEM_METHOD, total_size);
+	if (method->dynamic) {
+		address = g_malloc0 (total_size);
+	} else {
+		address = (MonoDebugMethodAddress *) allocate_data_item (
+				  table, MONO_DEBUG_DATA_ITEM_METHOD, total_size);
+	}
 
 	address->header.size = total_size;
 	address->header.symfile_id = handle ? handle->index : 0;
@@ -654,20 +681,13 @@ mono_debug_add_method (MonoMethod *method, MonoDebugMethodJitInfo *jit, MonoDoma
 		g_hash_table_insert (table->method_hash, declaring, header);
 
 		if (is_wrapper) {
-			const unsigned char* il_code;
-			MonoMethodHeader *mheader;
 			MonoDebugWrapperData *wrapper;
-			guint32 il_codesize;
-
-			mheader = mono_method_get_header (declaring);
-			il_code = mono_method_header_get_code (mheader, &il_codesize, NULL);
 
 			header->wrapper_data = wrapper = g_new0 (MonoDebugWrapperData, 1);
 
 			wrapper->wrapper_type = method->wrapper_type;
 			wrapper->method_name = mono_method_full_name (declaring, TRUE);
-			wrapper->cil_code = mono_disasm_code (
-				NULL, declaring, il_code, il_code + il_codesize);
+			wrapper->obsolete_cil_code = "";
 		}
 	} else {
 		address->header.wrapper_data = header->wrapper_data;
@@ -676,10 +696,47 @@ mono_debug_add_method (MonoMethod *method, MonoDebugMethodJitInfo *jit, MonoDoma
 
 	g_hash_table_insert (table->method_address_hash, method, address);
 
-	write_data_item (table, (guint8 *) address);
+	if (!method->dynamic)
+		write_data_item (table, (guint8 *) address);
 
 	mono_debugger_unlock ();
 	return address;
+}
+
+void
+mono_debug_remove_method (MonoMethod *method, MonoDomain *domain)
+{
+	MonoMethod *declaring;
+	MonoDebugDataTable *table;
+	MonoDebugMethodHeader *header;
+	MonoDebugMethodAddress *address;
+
+	if (!mono_debug_initialized)
+		return;
+
+	g_assert (method->dynamic);
+
+	mono_debugger_lock ();
+
+	table = lookup_data_table (domain);
+
+	declaring = method->is_inflated ? ((MonoMethodInflated *) method)->declaring : method;
+	g_hash_table_remove (table->method_hash, declaring);
+
+	address = g_hash_table_lookup (table->method_address_hash, method);
+	if (address) {
+		header = &address->header;
+
+		if (header->wrapper_data) {
+			g_free ((char*)header->wrapper_data->method_name);
+			g_free (header->wrapper_data);
+		}
+		g_free (address);
+	}
+
+	g_hash_table_remove (table->method_address_hash, method);
+
+	mono_debugger_unlock ();
 }
 
 void
@@ -1034,7 +1091,7 @@ mono_debug_lookup_source_location (MonoMethod *method, guint32 address, MonoDoma
 
 	mono_debugger_lock ();
 	minfo = _mono_debug_lookup_method (method);
-	if (!minfo || !minfo->handle || !minfo->handle->symfile || !minfo->handle->symfile->offset_table) {
+	if (!minfo || !minfo->handle || !minfo->handle->symfile || !mono_debug_symfile_is_loaded (minfo->handle->symfile)) {
 		mono_debugger_unlock ();
 		return NULL;
 	}
@@ -1067,7 +1124,7 @@ mono_debug_lookup_locals (MonoMethod *method)
 
 	mono_debugger_lock ();
 	minfo = _mono_debug_lookup_method (method);
-	if (!minfo || !minfo->handle || !minfo->handle->symfile || !minfo->handle->symfile->offset_table) {
+	if (!minfo || !minfo->handle || !minfo->handle->symfile || !mono_debug_symfile_is_loaded (minfo->handle->symfile)) {
 		mono_debugger_unlock ();
 		return NULL;
 	}
@@ -1184,3 +1241,45 @@ mono_is_debugger_attached (void)
 	return is_attached;
 }
 
+/*
+ * Bundles
+ */
+
+typedef struct _BundledSymfile BundledSymfile;
+
+struct _BundledSymfile {
+	BundledSymfile *next;
+	const char *aname;
+	const mono_byte *raw_contents;
+	int size;
+};
+
+static BundledSymfile *bundled_symfiles = NULL;
+
+void
+mono_register_symfile_for_assembly (const char *assembly_name, const mono_byte *raw_contents, int size)
+{
+	BundledSymfile *bsymfile;
+
+	bsymfile = g_new0 (BundledSymfile, 1);
+	bsymfile->aname = assembly_name;
+	bsymfile->raw_contents = raw_contents;
+	bsymfile->size = size;
+	bsymfile->next = bundled_symfiles;
+	bundled_symfiles = bsymfile;
+}
+
+static MonoDebugHandle *
+open_symfile_from_bundle (MonoImage *image)
+{
+	BundledSymfile *bsymfile;
+
+	for (bsymfile = bundled_symfiles; bsymfile; bsymfile = bsymfile->next) {
+		if (strcmp (bsymfile->aname, image->module_name))
+			continue;
+
+		return mono_debug_open_image (image, bsymfile->raw_contents, bsymfile->size);
+	}
+
+	return NULL;
+}
