@@ -499,6 +499,12 @@ namespace System.Windows.Forms {
 
 				wake = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.IP);
 				wake.Connect(listen.LocalEndPoint);
+
+				// Make this non-blocking, so it doesn't
+				// deadlock if too many wakes are sent
+				// before the wake_receive end is polled
+				wake.Blocking = false;
+
 				wake_receive = listen.Accept();
 
 				#if __MonoCS__
@@ -1230,7 +1236,13 @@ namespace System.Windows.Forms {
 		}
 
 		void WakeupMain () {
-			wake.Send (new byte [] { 0xFF });
+			try {
+				wake.Send (new byte [] { 0xFF });
+			} catch (SocketException ex) {
+				if (ex.SocketErrorCode != SocketError.WouldBlock) {
+					throw;
+				}
+			}
 		}
 
 		XEventQueue ThreadQueue(Thread thread) {
@@ -1258,9 +1270,20 @@ namespace System.Windows.Forms {
 
 			if ((long)nitems > 0) {
 				if (property == (IntPtr)Atom.XA_STRING) {
+					// Xamarin-5116: PtrToStringAnsi expects to get UTF-8, but we might have
+					// Latin-1 instead.
+					var s = Marshal.PtrToStringAnsi (prop);
+					if (string.IsNullOrEmpty (s)) {
+						var sb = new StringBuilder ();
+						for (int i = 0; i < (int)nitems; i++) {
+							var b = Marshal.ReadByte (prop, i);
+							sb.Append ((char)b);
+						}
+						s = sb.ToString ();
+					}
 					// Some X managers/apps pass unicode chars as escaped strings, so
 					// we may need to unescape them.
-					Clipboard.Item = UnescapeUnicodeFromAnsi (Marshal.PtrToStringAnsi(prop));
+					Clipboard.Item = UnescapeUnicodeFromAnsi (s);
 				} else if (property == (IntPtr)Atom.XA_BITMAP) {
 					// FIXME - convert bitmap to image
 				} else if (property == (IntPtr)Atom.XA_PIXMAP) {
@@ -1313,7 +1336,7 @@ namespace System.Windows.Forms {
 
 				int length = 0;
 				while (pos < value.Length) {
-					if (!Char.IsLetterOrDigit (value [pos]))
+					if (!ValidHexDigit (value [pos]))
 						break;
 					length++;
 					pos++;
@@ -1333,6 +1356,11 @@ namespace System.Windows.Forms {
 				sb.Append (value, start, value.Length - start);
 
 			return sb.ToString ();
+		}
+
+		private static bool ValidHexDigit (char e)
+		{
+			return Char.IsDigit (e) || (e >= 'A' && e <= 'F') || (e >= 'a' && e <= 'f');
 		}
 
 		void AddExpose (Hwnd hwnd, bool client, int x, int y, int width, int height) {
@@ -1591,11 +1619,23 @@ namespace System.Windows.Forms {
 				if (hwnd.zombie)
 					return;
 
-				if ((windows & WindowType.Whole) != 0) {
-					XMapWindow(DisplayHandle, hwnd.whole_window);
-				}
-				if ((windows & WindowType.Client) != 0) {
-					XMapWindow(DisplayHandle, hwnd.client_window);
+				if (hwnd.topmost) {
+					// Most window managers will respect the _NET_WM_STATE property.
+					// If not, use XMapRaised to map the window at the top level as
+					// a last ditch effort.
+					if ((windows & WindowType.Whole) != 0) {
+						XMapRaised(DisplayHandle, hwnd.whole_window);
+					}
+					if ((windows & WindowType.Client) != 0) {
+						XMapRaised(DisplayHandle, hwnd.client_window);
+					}
+				} else {
+					if ((windows & WindowType.Whole) != 0) {
+						XMapWindow(DisplayHandle, hwnd.whole_window);
+					}
+					if ((windows & WindowType.Client) != 0) {
+						XMapWindow(DisplayHandle, hwnd.client_window);
+					}
 				}
 
 				hwnd.mapped = true;
@@ -2760,17 +2800,36 @@ namespace System.Windows.Forms {
 			return Clipboard.Item;
 		}
 
-		internal override void ClipboardStore(IntPtr handle, object obj, int type, XplatUI.ObjectToClipboard converter)
+		internal override void ClipboardStore (IntPtr handle, object obj, int type, XplatUI.ObjectToClipboard converter, bool copy)
 		{
 			Clipboard.Converter = converter;
 
 			if (obj != null) {
 				Clipboard.AddSource (type, obj);
-				XSetSelectionOwner(DisplayHandle, CLIPBOARD, FosterParent, IntPtr.Zero);
+				XSetSelectionOwner (DisplayHandle, CLIPBOARD, FosterParent, IntPtr.Zero);
+
+				if (copy) {
+					try {
+						var clipboardAtom = gdk_atom_intern ("CLIPBOARD", true);
+						var clipboard = gtk_clipboard_get (clipboardAtom);
+						if (clipboard != null) {
+							// for now we only store text
+							var text = Clipboard.GetRtfText ();
+							if (string.IsNullOrEmpty (text))
+								text = Clipboard.GetPlainText ();
+							if (!string.IsNullOrEmpty (text)) {
+								gtk_clipboard_set_text (clipboard, text, text.Length);
+								gtk_clipboard_store (clipboard);
+							}
+						}
+					} catch {
+						// ignore any errors - most likely because gtk isn't installed?
+					}
+				}
 			} else {
 				// Clearing the selection
 				Clipboard.ClearSources ();
-				XSetSelectionOwner(DisplayHandle, CLIPBOARD, IntPtr.Zero, IntPtr.Zero);
+				XSetSelectionOwner (DisplayHandle, CLIPBOARD, IntPtr.Zero, IntPtr.Zero);
 			}
 		}
 
@@ -2925,13 +2984,8 @@ namespace System.Windows.Forms {
 					XSelectInput(DisplayHandle, hwnd.client_window, new IntPtr ((int)(SelectInputMask | EventMask.StructureNotifyMask | Keyboard.KeyEventMask)));
 			}
 
-			if (ExStyleSet (cp.ExStyle, WindowExStyles.WS_EX_TOPMOST)) {
-				atoms = new int[2];
-				atoms[0] = _NET_WM_WINDOW_TYPE_NORMAL.ToInt32();
-				XChangeProperty(DisplayHandle, hwnd.whole_window, _NET_WM_WINDOW_TYPE, (IntPtr)Atom.XA_ATOM, 32, PropertyMode.Replace, atoms, 1);
-
-				XSetTransientForHint (DisplayHandle, hwnd.whole_window, RootWindow);
-			}
+			if (ExStyleSet (cp.ExStyle, WindowExStyles.WS_EX_TOPMOST))
+				SetTopmost(hwnd.whole_window, true);
 
 			SetWMStyles(hwnd, cp);
 			
@@ -3756,6 +3810,10 @@ namespace System.Windows.Forms {
 			if (((long)nitems > 0) && (prop != IntPtr.Zero)) {
 				active = (IntPtr)Marshal.ReadInt32(prop);
 				XFree(prop);
+			} else {
+				// The window manager does not support _NET_ACTIVE_WINDOW.  Fall back to XGetInputFocus.
+				IntPtr	revert_to = IntPtr.Zero;
+				XGetInputFocus(DisplayHandle, out active, out revert_to);
 			}
 
 			if (active != IntPtr.Zero) {
@@ -5736,6 +5794,7 @@ namespace System.Windows.Forms {
 		{
 
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
+			hwnd.topmost = enabled;
 
 			if (enabled) {
 				lock (XlibLock) {
@@ -6353,6 +6412,13 @@ namespace System.Windows.Forms {
 		{
 			DebugHelper.TraceWriteLine ("XMapWindow");
 			return _XMapWindow(display, window);
+		}
+		[DllImport ("libX11", EntryPoint="XMapRaised")]
+		internal extern static int _XMapRaised(IntPtr display, IntPtr window);
+		internal static int XMapRaised(IntPtr display, IntPtr window)
+		{
+			DebugHelper.TraceWriteLine ("XMapRaised");
+			return _XMapRaised(display, window);
 		}
 		[DllImport ("libX11", EntryPoint="XUnmapWindow")]
 		internal extern static int _XUnmapWindow(IntPtr display, IntPtr window);
@@ -7204,6 +7270,9 @@ namespace System.Windows.Forms {
 		[DllImport ("libX11", EntryPoint="XMapWindow")]
 		internal extern static int XMapWindow(IntPtr display, IntPtr window);
 		
+		[DllImport ("libX11", EntryPoint="XMapRaised")]
+		internal extern static int XMapRaised(IntPtr display, IntPtr window);
+		
 		[DllImport ("libX11", EntryPoint="XUnmapWindow")]
 		internal extern static int XUnmapWindow(IntPtr display, IntPtr window);
 		
@@ -7514,7 +7583,24 @@ namespace System.Windows.Forms {
 
 		[DllImport ("libX11", EntryPoint="XIfEvent")]
 		internal extern static void XIfEvent (IntPtr display, ref XEvent xevent, Delegate event_predicate, IntPtr arg);
+
+		[DllImport ("libX11", EntryPoint="XGetInputFocus")]
+		internal extern static void XGetInputFocus (IntPtr display, out IntPtr focus, out IntPtr revert_to);
 		#endregion
+#region Gtk/Gdk imports
+		[DllImport("libgdk-x11-2.0")]
+		internal extern static IntPtr gdk_atom_intern (string atomName, bool onlyIfExists);
+
+		[DllImport("libgtk-x11-2.0")]
+		internal extern static IntPtr gtk_clipboard_get (IntPtr atom);
+
+		[DllImport("libgtk-x11-2.0")]
+		internal extern static void gtk_clipboard_store (IntPtr clipboard);
+
+		[DllImport("libgtk-x11-2.0")]
+		internal extern static void gtk_clipboard_set_text (IntPtr clipboard, string text, int len);
+#endregion
+
 #endif
 	}
 }
