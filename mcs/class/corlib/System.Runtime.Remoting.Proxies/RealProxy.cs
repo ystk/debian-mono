@@ -45,6 +45,7 @@ using System.Runtime.InteropServices;
 namespace System.Runtime.Remoting.Proxies
 {
 #pragma warning disable 169, 649
+	[StructLayout (LayoutKind.Sequential)]
 	internal class TransparentProxy {
 		public RealProxy _rp;
 		IntPtr _class;
@@ -53,6 +54,7 @@ namespace System.Runtime.Remoting.Proxies
 #pragma warning restore 169, 649
 	
 	[ComVisible (true)]
+	[StructLayout (LayoutKind.Sequential)]
 	public abstract class RealProxy {
 		// other classes visible to the runtime 
 		// derive from this class so keep these locals
@@ -216,7 +218,7 @@ namespace System.Runtime.Remoting.Proxies
 			}
 			
 			if (res_msg.LogicalCallContext != null && res_msg.LogicalCallContext.HasInfo)
-				CallContext.UpdateCurrentCallContext (res_msg.LogicalCallContext);
+				CallContext.UpdateCurrentLogicalCallContext (res_msg.LogicalCallContext);
 
 			exc = res_msg.Exception;
 
