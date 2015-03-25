@@ -1,3 +1,20 @@
+mono (2.6.7-5.1+deb6u1) squeeze-lts; urgency=high
+
+  * [74ceb8e] Mono's implementation of the SSL/TLS stack failed to check 
+    the order of the handshake messages. Which would allow various attacks 
+    on the protocol to succeed. ("SKIP-TLS" attack). 
+    (Closes: #780751, CVE-2015-2318)
+  * [1aae9b7] Remove the client-side SSLv2 fallback. There's almost no SSLv3 
+    web site left so a v2 fallback is only extra code we do not need to 
+    carry forward. (Closes: #780751, CVE-2015-2320)
+  * [1d1cf6a] Remove the EXPORT ciphers and related code path. That was 
+    still useful in 2003/2004 but the technical and legal landscape changed 
+    a lot since then. Removing the old, limited key size, cipher suites 
+    also allow removed additional parts of the code that deals with them. 
+    ("FREAK" attack) (Closes: #780751, CVE-2015-2319)
+
+ -- Jo Shields <jo.shields@xamarin.com>  Thu, 19 Mar 2015 09:40:40 +0000
+
 mono (2.6.7-5.1) stable-security; urgency=high
 
   [ Gonzalo Paniagua Javier ]
