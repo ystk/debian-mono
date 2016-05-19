@@ -1,3 +1,12 @@
+mono (2.6.7-5.1+deb6u2) squeeze-lts; urgency=low
+
+  * CVE-2009-0689: Fix crash in the string-to-double parser code that could
+    theoretically lead to arbitrary code execution (put the applied patch
+    in debian/patches/ for documentation purpose, the patch is actually
+    applied as part of the .diff.gz).
+
+ -- Raphaël Hertzog <hertzog@debian.org>  Wed, 30 Dec 2015 10:15:11 +0000
+
 mono (2.6.7-5.1+deb6u1) squeeze-lts; urgency=high
 
   * [74ceb8e] Mono's implementation of the SSL/TLS stack failed to check 

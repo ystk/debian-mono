@@ -532,7 +532,7 @@ Balloc
 #endif
 
 	ACQUIRE_DTOA_LOCK(0);
-	if ((rv = freelist[k])) {
+	if (k <= Kmax && (rv = freelist[k])) {
 		freelist[k] = rv->next;
 		}
 	else {
@@ -566,12 +566,16 @@ Bfree
 #endif
 {
 	if (v) {
-		ACQUIRE_DTOA_LOCK(0);
-		v->next = freelist[v->k];
-		freelist[v->k] = v;
-		FREE_DTOA_LOCK(0);
+		if (v->k > Kmax)
+			free((void*)v);
+		else {
+			ACQUIRE_DTOA_LOCK(0);
+			v->next = freelist[v->k];
+			freelist[v->k] = v;
+			FREE_DTOA_LOCK(0);
 		}
 	}
+}
 
 #define Bcopy(x,y) memcpy((char *)&x->sign, (char *)&y->sign, \
 y->wds*sizeof(Long) + 2*sizeof(int))
